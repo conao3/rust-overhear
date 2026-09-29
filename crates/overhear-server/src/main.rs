@@ -198,7 +198,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let mut registry = TranslatorRegistry::with_defaults();
+    let mut registry = TranslatorRegistry::with_defaults().context("翻訳エンジンの設定")?;
     registry.set_default(&args.translator);
 
     let config = RuntimeConfig {
@@ -245,8 +245,15 @@ async fn main() -> Result<()> {
         }
     };
 
+    let translators = Arc::new(registry);
+    // 最初の発話を待たせないよう、裏でモデルを載せておく。
+    tokio::spawn({
+        let translators = Arc::clone(&translators);
+        async move { translators.warm_up_default().await }
+    });
+
     let services = Services {
-        translators: Arc::new(registry),
+        translators,
         whisper,
         dictionaries: Arc::new(dictionaries),
         vocab: Arc::new(vocab),

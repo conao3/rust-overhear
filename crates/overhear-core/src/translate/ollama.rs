@@ -2,17 +2,26 @@
 //!
 //! ビデオ会議の音声まで拾う設計であるため、既定で外部へ送らない。
 
+use anyhow::Context as _;
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use super::{Availability, TranslateError, TranslateRequest, Translator, TranslatorCapabilities};
+use super::{
+    Availability, TranslateError, TranslateRequest, Translator, TranslatorCapabilities,
+    language_name,
+};
 
 const DEFAULT_ENDPOINT: &str = "http://127.0.0.1:11434";
 const DEFAULT_MODEL: &str = "qwen3:8b";
+/// 常駐アプリなので、発話の合間にモデルが降ろされないよう長めに持たせる。
+const DEFAULT_KEEP_ALIVE: &str = "30m";
 
 pub struct OllamaTranslator {
     endpoint: String,
     model: String,
+    keep_alive: String,
+    /// 推論スレッド数。None なら Ollama の判断に任せる。
+    num_thread: Option<u32>,
     client: reqwest::Client,
 }
 
@@ -32,14 +41,64 @@ struct TagModel {
 }
 
 impl OllamaTranslator {
-    pub fn from_env() -> Self {
-        Self {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let num_thread =
+            match std::env::var("OVERHEAR_OLLAMA_NUM_THREAD") {
+                Ok(value) => Some(value.parse::<u32>().with_context(|| {
+                    format!("OVERHEAR_OLLAMA_NUM_THREAD が数値でない: {value}")
+                })?),
+                Err(_) => None,
+            };
+        Ok(Self {
             endpoint: std::env::var("OVERHEAR_OLLAMA_ENDPOINT")
                 .unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string()),
             model: std::env::var("OVERHEAR_OLLAMA_MODEL")
                 .unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
+            keep_alive: std::env::var("OVERHEAR_OLLAMA_KEEP_ALIVE")
+                .unwrap_or_else(|_| DEFAULT_KEEP_ALIVE.to_string()),
+            num_thread,
             client: reqwest::Client::new(),
+        })
+    }
+
+    fn prompt(text: &str, target_lang: &str) -> String {
+        format!(
+            "Translate the following text into {}. Output only the translation, \
+             with no explanation, no quotes, and no preamble.\n\n{}",
+            language_name(target_lang),
+            text
+        )
+    }
+
+    async fn generate(&self, prompt: &str) -> Result<String, TranslateError> {
+        let mut options = serde_json::json!({ "temperature": 0 });
+        if let Some(n) = self.num_thread {
+            options["num_thread"] = n.into();
         }
+        let body = serde_json::json!({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": false,
+            "think": false,
+            "keep_alive": self.keep_alive,
+            "options": options,
+        });
+        let resp = self
+            .client
+            .post(format!("{}/api/generate", self.endpoint))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| TranslateError::Unavailable(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            return Err(TranslateError::Failed(format!("HTTP {}", resp.status())));
+        }
+        let parsed: GenerateResponse = resp
+            .json()
+            .await
+            .map_err(|e| TranslateError::Failed(e.to_string()))?;
+        Ok(parsed.response.trim().to_string())
     }
 }
 
@@ -83,32 +142,26 @@ impl Translator for OllamaTranslator {
     }
 
     async fn translate(&self, req: &TranslateRequest) -> Result<String, TranslateError> {
-        let prompt = format!(
-            "Translate the following text into {}. Output only the translation, \
-             with no explanation, no quotes, and no preamble.\n\n{}",
-            req.target_lang, req.text
-        );
-        let body = serde_json::json!({
-            "model": self.model,
-            "prompt": prompt,
-            "stream": false,
-            "think": false,
-        });
-        let resp = self
-            .client
-            .post(format!("{}/api/generate", self.endpoint))
-            .json(&body)
-            .send()
+        self.generate(&Self::prompt(&req.text, &req.target_lang))
             .await
-            .map_err(|e| TranslateError::Unavailable(e.to_string()))?;
+    }
 
-        if !resp.status().is_success() {
-            return Err(TranslateError::Failed(format!("HTTP {}", resp.status())));
-        }
-        let parsed: GenerateResponse = resp
-            .json()
+    /// モデルをメモリへ載せる。CPU 推論では初回だけ読み込みで数秒余計にかかる。
+    async fn warm_up(&self) -> Result<(), TranslateError> {
+        self.generate(&Self::prompt("Hello.", "ja"))
             .await
-            .map_err(|e| TranslateError::Failed(e.to_string()))?;
-        Ok(parsed.response.trim().to_string())
+            .map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_names_the_language() {
+        let prompt = OllamaTranslator::prompt("Hi.", "ja");
+        assert!(prompt.contains("into Japanese."));
+        assert!(prompt.ends_with("\n\nHi."));
     }
 }

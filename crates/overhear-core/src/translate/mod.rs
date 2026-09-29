@@ -68,6 +68,30 @@ pub trait Translator: Send + Sync {
     /// 資格情報・接続先が揃っているか。UI の選択肢の活性/非活性に使う。
     async fn availability(&self) -> Availability;
     async fn translate(&self, req: &TranslateRequest) -> Result<String, TranslateError>;
+    /// 初回の翻訳が遅れないよう、モデルの読み込み等を先に済ませる。
+    async fn warm_up(&self) -> Result<(), TranslateError> {
+        Ok(())
+    }
+}
+
+/// 言語コードを英語の言語名にする。
+///
+/// LLM に渡すプロンプトは `ja` のようなコードだと小さいモデルが解釈を
+/// 誤り、別の言語で返してくる。名前で渡す。
+pub fn language_name(code: &str) -> &str {
+    match code.to_ascii_lowercase().split(['-', '_']).next() {
+        Some("ja") => "Japanese",
+        Some("en") => "English",
+        Some("zh") => "Chinese",
+        Some("ko") => "Korean",
+        Some("es") => "Spanish",
+        Some("fr") => "French",
+        Some("de") => "German",
+        Some("it") => "Italian",
+        Some("pt") => "Portuguese",
+        Some("ru") => "Russian",
+        _ => code,
+    }
 }
 
 /// 登録済みストラテジーの一覧と、既定エンジンの解決を持つ。
@@ -78,17 +102,17 @@ pub struct TranslatorRegistry {
 
 impl TranslatorRegistry {
     /// 既定の顔ぶれ。ローカルの Ollama を既定エンジンに据える。
-    pub fn with_defaults() -> Self {
+    pub fn with_defaults() -> anyhow::Result<Self> {
         let engines: Vec<Arc<dyn Translator>> = vec![
-            Arc::new(ollama::OllamaTranslator::from_env()),
+            Arc::new(ollama::OllamaTranslator::from_env()?),
             Arc::new(deepl::DeeplTranslator::from_env()),
             Arc::new(google::GoogleTranslator::from_env()),
             Arc::new(null::NullTranslator),
         ];
-        Self {
+        Ok(Self {
             engines,
             default_id: "ollama".to_string(),
-        }
+        })
     }
 
     pub fn set_default(&mut self, id: impl Into<String>) {
@@ -101,6 +125,24 @@ impl TranslatorRegistry {
 
     pub fn list(&self) -> &[Arc<dyn Translator>] {
         &self.engines
+    }
+
+    /// 既定エンジンの準備を済ませる。
+    pub async fn warm_up_default(&self) {
+        let Some(engine) = self.get(&self.default_id) else {
+            return;
+        };
+        let started = std::time::Instant::now();
+        match engine.warm_up().await {
+            Ok(()) => tracing::info!(
+                engine = engine.id(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "翻訳エンジンの準備が済んだ"
+            ),
+            Err(err) => {
+                tracing::warn!(engine = engine.id(), %err, "翻訳エンジンを準備できなかった")
+            }
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<dyn Translator>> {
@@ -151,8 +193,15 @@ impl TranslatorRegistry {
     }
 }
 
-impl Default for TranslatorRegistry {
-    fn default() -> Self {
-        Self::with_defaults()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn language_name_resolves_codes_and_regions() {
+        assert_eq!(language_name("ja"), "Japanese");
+        assert_eq!(language_name("en-US"), "English");
+        assert_eq!(language_name("zh_TW"), "Chinese");
+        assert_eq!(language_name("tlh"), "tlh");
     }
 }
