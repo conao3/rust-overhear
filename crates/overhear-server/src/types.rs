@@ -259,3 +259,20 @@ impl From<core_devices::AudioDevice> for AudioDevice {
         }
     }
 }
+
+/// スタジオの設定タブで変えられる値。
+#[derive(SimpleObject)]
+pub struct Preferences {
+    pub target_lang: String,
+    pub ollama_model: String,
+    /// pull 済みの Ollama モデル。Ollama に繋がらなければ空。
+    pub ollama_models: Vec<String>,
+    pub api_keys: Vec<ApiKeyState>,
+}
+
+/// キーそのものは返さない。入っているかどうかだけ。
+#[derive(SimpleObject)]
+pub struct ApiKeyState {
+    pub engine_id: ID,
+    pub configured: bool,
+}

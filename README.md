@@ -117,8 +117,8 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 | id              | 設定                                                 | 外部送信 |
 | --------------- | ---------------------------------------------------- | -------- |
 | `ollama` (既定) | `OVERHEAR_OLLAMA_ENDPOINT` / `OVERHEAR_OLLAMA_MODEL` | しない   |
-| `deepl`         | `OVERHEAR_DEEPL_API_KEY`                             | する     |
-| `google`        | `OVERHEAR_GOOGLE_API_KEY`                            | する     |
+| `deepl`         | 設定タブの API キー (`:fx` で終わる Free キーも可)   | する     |
+| `google`        | 設定タブの API キー                                  | する     |
 | `none`          | —                                                    | しない   |
 
 ### いつ訳すか
@@ -129,6 +129,10 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 - 台詞が 1.5 秒途切れたとき。最新の 1 行だけを、whisper の差し替えが済んでから訳す。動画を止めると、いま画面にある台詞の訳が出る
 
 台詞が続く動画では、CPU 推論のローカル LLM は全文の翻訳に追いつかない。Core Ultra 5 225U で全文を訳していたときは、台詞が 2 秒に 1 行のペースで確定するのに対し、`num_thread` 4 で overhear 一式が約 6.6 コアを使い続け、確定から訳が付くまで中央値 13 秒、訳が付いたのは 3 割だった。
+
+### 設定タブ
+
+スタジオの「設定」タブで、訳す先の言語・Ollama のモデル (pull 済みのものから選ぶ)・DeepL / Google の API キーを変えられる。言語とモデルはデータディレクトリの `settings.json` に、API キーは Secret Service (gnome-keyring 等) にサービス名 `overhear` で置き、次の起動でも戻る。キーそのものはサーバから返さず、入っているかどうかだけを出す。Secret Service が無い環境でも起動はでき、キーの保存だけがエラーになる。`--target-lang` を渡した起動では保存値より引数を優先する。
 
 スタジオの「翻訳エンジン」で選んだものが翻訳の既定になる。指定エンジンが失敗すると既定エンジンへフォールバックし、`Translation.fallbackFrom` に元のエンジン id が残る。フォールバック先も失敗した場合は翻訳なしで segment を確定させ、字幕そのものは止めない。
 
@@ -173,7 +177,10 @@ CPU 推論 (Core Ultra 5 225U、`num_thread` 8) で字幕 1 行の英→日に�
 - [x] 翻訳エンジンと音源の選択の永続化 (`settings.json`)
 - [x] 音源の選択 (再生側の monitor / 録音側)。切り替えは `pw-record` の子プロセスだけを差し替える
 - [ ] `pipewire-rs` 直結 (現状は `pw-record` の subprocess)
-- [ ] API キーの Secret Service (keyring) 保存 (現状は環境変数)
+- [x] API キーの Secret Service (keyring) 保存。スタジオの設定タブから入れる
+- [x] 設定タブ (訳す先の言語、Ollama のモデル、API キー)
+- [x] キャプチャとサーバが落ちたときの自動再起動
+- [x] ウィンドウの位置と大きさの保存
 
 ## Anki への書き出し
 
@@ -215,7 +222,6 @@ whisper に渡す区間は、april のトークン時刻から前 200ms・後ろ
 - whisper は `[MUSIC PLAYING]` のような非発話マーカーを返す。発話に混ざっている場合だけ取り除き、区間全体がマーカーのときは台詞が無いことを示すために残す (翻訳には回さない)
 - 台詞が続いている間は訳が出ない (途切れるか「訳す」を押したときに出る)。CPU 推論のローカル翻訳が全文に追いつかないため
 - april-asr は英語モデルのみ。話者分離は無い
-- API キーは環境変数から読む (keyring 未対応)
 
 ## ライセンス
 

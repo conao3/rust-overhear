@@ -25,6 +25,7 @@ use overhear_core::asr::whisper::WhisperRefiner;
 use overhear_core::dict::DictionaryRegistry;
 use overhear_core::pipeline::Services;
 use overhear_core::ring::encode_wav;
+use overhear_core::secrets::{ApiKeys, KeyringBackend};
 use overhear_core::settings::SettingsStore;
 use overhear_core::translate::TranslatorRegistry;
 use overhear_core::vocab::VocabStore;
@@ -72,9 +73,9 @@ struct Args {
     #[arg(long, default_value_t = 600)]
     ring_seconds: usize,
 
-    /// 翻訳先の言語。
-    #[arg(long, default_value = "ja")]
-    target_lang: String,
+    /// 翻訳先の言語。省くと前回 UI で選んだもの、それも無ければ ja。
+    #[arg(long)]
+    target_lang: Option<String>,
 
     /// 既定の翻訳エンジン。省くと前回 UI で選んだもの、それも無ければ ollama。
     #[arg(long)]
@@ -202,7 +203,19 @@ async fn main() -> Result<()> {
     let data_dir = overhear_core::data_dir()?;
     let settings = Arc::new(SettingsStore::open(&data_dir).context("設定を読めない")?);
 
-    let registry = TranslatorRegistry::with_defaults().context("翻訳エンジンの設定")?;
+    // Secret Service が無くても字幕は使えるよう、読めなければキー無しで続ける。
+    // キーの保存はその時点でエラーになる。
+    let api_keys = match ApiKeys::load(Box::new(KeyringBackend), &["deepl", "google"]) {
+        Ok(keys) => keys,
+        Err(err) => {
+            tracing::warn!(%err, "API キーを読めないので、キー無しで続ける");
+            ApiKeys::load(Box::new(KeyringBackend), &[])?
+        }
+    };
+    let api_keys = Arc::new(api_keys);
+
+    let registry =
+        TranslatorRegistry::with_defaults(Arc::clone(&api_keys)).context("翻訳エンジンの設定")?;
     if let Some(id) = args
         .translator
         .clone()
@@ -210,11 +223,18 @@ async fn main() -> Result<()> {
     {
         registry.set_default(&id)?;
     }
+    if let Some(model) = settings.get().ollama_model {
+        registry.ollama().set_model(&model)?;
+    }
 
     let config = RuntimeConfig {
         silence_threshold: args.silence_threshold,
         ring_seconds: args.ring_seconds,
-        target_lang: args.target_lang.clone(),
+        target_lang: args
+            .target_lang
+            .clone()
+            .or_else(|| settings.get().target_lang)
+            .unwrap_or_else(|| "ja".to_string()),
         engine: if args.mock {
             EngineChoice::Mock
         } else {
@@ -269,6 +289,7 @@ async fn main() -> Result<()> {
         vocab: Arc::new(vocab),
         anki: Arc::new(AnkiConnect::from_env()),
         settings,
+        api_keys,
     };
 
     let overhear = Overhear::start(config, services).context("パイプラインの起動")?;

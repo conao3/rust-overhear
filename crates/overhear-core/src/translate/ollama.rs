@@ -18,7 +18,8 @@ const DEFAULT_KEEP_ALIVE: &str = "30m";
 
 pub struct OllamaTranslator {
     endpoint: String,
-    model: String,
+    /// 設定から実行中に切り替えられる。
+    model: std::sync::RwLock<String>,
     keep_alive: String,
     /// 推論スレッド数。None なら Ollama の判断に任せる。
     num_thread: Option<u32>,
@@ -52,8 +53,10 @@ impl OllamaTranslator {
         Ok(Self {
             endpoint: std::env::var("OVERHEAR_OLLAMA_ENDPOINT")
                 .unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string()),
-            model: std::env::var("OVERHEAR_OLLAMA_MODEL")
-                .unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
+            model: std::sync::RwLock::new(
+                std::env::var("OVERHEAR_OLLAMA_MODEL")
+                    .unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
+            ),
             keep_alive: std::env::var("OVERHEAR_OLLAMA_KEEP_ALIVE")
                 .unwrap_or_else(|_| DEFAULT_KEEP_ALIVE.to_string()),
             num_thread,
@@ -66,6 +69,33 @@ impl OllamaTranslator {
     /// qwen3 のテンプレートは `think: false` のときユーザー発話の末尾に
     /// ` /no_think` を足す。原文で終わるプロンプトだとそれを原文の一部として
     /// 訳に混ぜてくる。
+    pub fn model(&self) -> String {
+        self.model.read().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    pub fn set_model(&self, model: &str) -> anyhow::Result<()> {
+        let mut current = self
+            .model
+            .write()
+            .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
+        *current = model.to_string();
+        Ok(())
+    }
+
+    /// pull 済みのモデル名。
+    pub async fn installed_models(&self) -> anyhow::Result<Vec<String>> {
+        let tags: TagsResponse = self
+            .client
+            .get(format!("{}/api/tags", self.endpoint))
+            .send()
+            .await
+            .with_context(|| format!("{} に接続できない", self.endpoint))?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(tags.models.into_iter().map(|m| m.name).collect())
+    }
+
     fn prompt(text: &str, target_lang: &str) -> String {
         format!(
             "Text:\n{}\n\nTranslate the text above into {}. Output only the translation, \
@@ -81,7 +111,7 @@ impl OllamaTranslator {
             options["num_thread"] = n.into();
         }
         let body = serde_json::json!({
-            "model": self.model,
+            "model": self.model(),
             "prompt": prompt,
             "stream": false,
             "think": false,
@@ -126,23 +156,11 @@ impl Translator for OllamaTranslator {
     }
 
     async fn availability(&self) -> Availability {
-        let url = format!("{}/api/tags", self.endpoint);
-        match self.client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => match resp.json::<TagsResponse>().await {
-                Ok(tags) => {
-                    if tags.models.iter().any(|m| m.name.starts_with(&self.model)) {
-                        Availability::ok()
-                    } else {
-                        Availability::unavailable(format!(
-                            "モデル {} が pull されていない",
-                            self.model
-                        ))
-                    }
-                }
-                Err(err) => Availability::unavailable(format!("応答を解釈できない: {err}")),
-            },
-            Ok(resp) => Availability::unavailable(format!("Ollama が {} を返した", resp.status())),
-            Err(_) => Availability::unavailable(format!("{} に接続できない", self.endpoint)),
+        let model = self.model();
+        match self.installed_models().await {
+            Ok(models) if models.iter().any(|m| m.starts_with(&model)) => Availability::ok(),
+            Ok(_) => Availability::unavailable(format!("モデル {model} が pull されていない")),
+            Err(err) => Availability::unavailable(err.to_string()),
         }
     }
 

@@ -110,6 +110,7 @@
             buildInputs = with pkgs; [
               openssl
               sqlite
+              dbus # keyring (Secret Service)
               webkitgtk_4_1
               gtk3
               libsoup_3
@@ -180,6 +181,7 @@
             buildInputs = with pkgs; [
               openssl
               sqlite
+              dbus # keyring (Secret Service)
               # Tauri (Linux)
               webkitgtk_4_1
               gtk3

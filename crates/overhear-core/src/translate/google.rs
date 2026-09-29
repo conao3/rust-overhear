@@ -1,15 +1,19 @@
 //! Google Cloud Translation API によるストラテジー。
 //! DeepL が対応しない言語ペア向け。
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::Deserialize;
+
+use crate::secrets::ApiKeys;
 
 use super::{Availability, TranslateError, TranslateRequest, Translator, TranslatorCapabilities};
 
 const ENDPOINT: &str = "https://translation.googleapis.com/language/translate/v2";
 
 pub struct GoogleTranslator {
-    api_key: Option<String>,
+    keys: Arc<ApiKeys>,
     client: reqwest::Client,
 }
 
@@ -30,9 +34,9 @@ struct GoogleTranslation {
 }
 
 impl GoogleTranslator {
-    pub fn from_env() -> Self {
+    pub fn new(keys: Arc<ApiKeys>) -> Self {
         Self {
-            api_key: std::env::var("OVERHEAR_GOOGLE_API_KEY").ok(),
+            keys,
             client: reqwest::Client::new(),
         }
     }
@@ -57,16 +61,16 @@ impl Translator for GoogleTranslator {
     }
 
     async fn availability(&self) -> Availability {
-        match &self.api_key {
+        match self.keys.get(self.id()) {
             Some(_) => Availability::ok(),
-            None => Availability::unavailable("OVERHEAR_GOOGLE_API_KEY が未設定"),
+            None => Availability::unavailable("API キーが未設定 (設定タブで入れる)"),
         }
     }
 
     async fn translate(&self, req: &TranslateRequest) -> Result<String, TranslateError> {
         let key = self
-            .api_key
-            .as_ref()
+            .keys
+            .get(self.id())
             .ok_or_else(|| TranslateError::Unavailable("API キーが未設定".into()))?;
 
         let mut body = serde_json::json!({

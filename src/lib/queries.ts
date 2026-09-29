@@ -192,3 +192,46 @@ export const SET_CAPTURE_DEVICE = gql`
     }
   }
 `;
+
+const PREFERENCE_FIELDS = `
+  targetLang
+  ollamaModel
+  ollamaModels
+  apiKeys {
+    engineId
+    configured
+  }
+`;
+
+export const PREFERENCES = gql`
+  query Preferences {
+    preferences {
+      ${PREFERENCE_FIELDS}
+    }
+  }
+`;
+
+export const SET_TARGET_LANG = gql`
+  mutation SetTargetLang($lang: String!) {
+    setTargetLang(lang: $lang) {
+      ${PREFERENCE_FIELDS}
+    }
+  }
+`;
+
+export const SET_OLLAMA_MODEL = gql`
+  mutation SetOllamaModel($model: String!) {
+    setOllamaModel(model: $model) {
+      ${PREFERENCE_FIELDS}
+    }
+  }
+`;
+
+/** key を省くと消す。キーそのものはサーバから返らない。 */
+export const SET_API_KEY = gql`
+  mutation SetApiKey($engineId: ID!, $key: String) {
+    setApiKey(engineId: $engineId, key: $key) {
+      ${PREFERENCE_FIELDS}
+    }
+  }
+`;

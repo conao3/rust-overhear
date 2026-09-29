@@ -12,6 +12,7 @@ pub mod gate;
 pub mod model;
 pub mod pipeline;
 pub mod ring;
+pub mod secrets;
 pub mod settings;
 pub mod translate;
 pub mod vocab;

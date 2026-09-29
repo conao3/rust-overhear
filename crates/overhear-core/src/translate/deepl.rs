@@ -1,15 +1,18 @@
 //! DeepL API によるストラテジー。品質を優先して名指しで選ぶとき用。
 //!
-//! API キーは MVP では環境変数から読む。Secret Service (keyring) への
-//! 移行はフェーズ 4。
+//! API キーは Secret Service に置く ([`crate::secrets`])。
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use crate::secrets::ApiKeys;
+
 use super::{Availability, TranslateError, TranslateRequest, Translator, TranslatorCapabilities};
 
 pub struct DeeplTranslator {
-    api_key: Option<String>,
+    keys: Arc<ApiKeys>,
     client: reqwest::Client,
 }
 
@@ -24,9 +27,9 @@ struct DeeplTranslation {
 }
 
 impl DeeplTranslator {
-    pub fn from_env() -> Self {
+    pub fn new(keys: Arc<ApiKeys>) -> Self {
         Self {
-            api_key: std::env::var("OVERHEAR_DEEPL_API_KEY").ok(),
+            keys,
             client: reqwest::Client::new(),
         }
     }
@@ -60,16 +63,16 @@ impl Translator for DeeplTranslator {
     }
 
     async fn availability(&self) -> Availability {
-        match &self.api_key {
+        match self.keys.get(self.id()) {
             Some(_) => Availability::ok(),
-            None => Availability::unavailable("OVERHEAR_DEEPL_API_KEY が未設定"),
+            None => Availability::unavailable("API キーが未設定 (設定タブで入れる)"),
         }
     }
 
     async fn translate(&self, req: &TranslateRequest) -> Result<String, TranslateError> {
         let key = self
-            .api_key
-            .as_ref()
+            .keys
+            .get(self.id())
             .ok_or_else(|| TranslateError::Unavailable("API キーが未設定".into()))?;
 
         let mut form = vec![
@@ -82,7 +85,7 @@ impl Translator for DeeplTranslator {
 
         let resp = self
             .client
-            .post(Self::endpoint(key))
+            .post(Self::endpoint(&key))
             .header("Authorization", format!("DeepL-Auth-Key {key}"))
             .form(&form)
             .send()

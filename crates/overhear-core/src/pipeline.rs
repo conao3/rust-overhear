@@ -85,6 +85,7 @@ pub struct Services {
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
     pub settings: Arc<SettingsStore>,
+    pub api_keys: Arc<crate::secrets::ApiKeys>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -110,6 +111,9 @@ pub struct Overhear {
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
     settings: Arc<SettingsStore>,
+    api_keys: Arc<crate::secrets::ApiKeys>,
+    /// 訳す先の言語。設定から実行中に切り替えられる。
+    target_lang: RwLock<String>,
     /// whisper での差し替え待ち。1 本の worker が新しいものから処理する。
     refine_queue: WorkQueue,
     /// 翻訳待ち。1 本の worker が新しいものから訳す。
@@ -250,6 +254,8 @@ impl Overhear {
             vocab: services.vocab,
             anki: services.anki,
             settings: services.settings,
+            api_keys: services.api_keys,
+            target_lang: RwLock::new(config.target_lang.clone()),
             refine_queue: WorkQueue::default(),
             translate_queue: WorkQueue::default(),
             refining: AtomicBool::new(false),
@@ -496,6 +502,43 @@ impl Overhear {
         self.settings.update(|s| s.capture_target = target)
     }
 
+    pub fn target_lang(&self) -> String {
+        self.target_lang
+            .read()
+            .map(|l| l.clone())
+            .unwrap_or_default()
+    }
+
+    /// 訳す先の言語を切り替え、次の起動にも持ち越す。
+    pub fn set_target_lang(&self, lang: &str) -> Result<()> {
+        let lang = lang.trim();
+        if lang.is_empty() {
+            anyhow::bail!("言語が空");
+        }
+        *self
+            .target_lang
+            .write()
+            .map_err(|_| anyhow::anyhow!("lock poisoned"))? = lang.to_string();
+        self.settings
+            .update(|s| s.target_lang = Some(lang.to_string()))
+    }
+
+    /// Ollama のモデルを切り替え、次の起動にも持ち越す。
+    pub fn set_ollama_model(&self, model: &str) -> Result<()> {
+        self.translators.ollama().set_model(model)?;
+        self.settings
+            .update(|s| s.ollama_model = Some(model.to_string()))
+    }
+
+    /// API キーを Secret Service に保存する。`None` で消す。
+    pub fn set_api_key(&self, engine_id: &str, key: Option<&str>) -> Result<()> {
+        self.api_keys.set(engine_id, key)
+    }
+
+    pub fn has_api_key(&self, engine_id: &str) -> bool {
+        self.api_keys.get(engine_id).is_some()
+    }
+
     /// 自動翻訳に使うエンジンを切り替え、次の起動にも持ち越す。
     pub fn set_default_translator(&self, id: &str) -> Result<()> {
         self.translators.set_default(id)?;
@@ -711,7 +754,7 @@ impl Overhear {
         let req = TranslateRequest {
             text: segment.source_text.clone(),
             source_lang: None,
-            target_lang: self.config.target_lang.clone(),
+            target_lang: self.target_lang(),
         };
         let translation = self.translators.translate(engine_id, &req).await?;
         if translation.text.is_empty() {

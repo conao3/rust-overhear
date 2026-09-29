@@ -97,21 +97,25 @@ pub fn language_name(code: &str) -> &str {
 /// 登録済みストラテジーの一覧と、既定エンジンの解決を持つ。
 pub struct TranslatorRegistry {
     engines: Vec<Arc<dyn Translator>>,
+    /// モデルの切り替えのため、型のまま持っておく。
+    ollama: Arc<ollama::OllamaTranslator>,
     /// 実行中に UI から切り替えられる。
     default_id: RwLock<String>,
 }
 
 impl TranslatorRegistry {
     /// 既定の顔ぶれ。ローカルの Ollama を既定エンジンに据える。
-    pub fn with_defaults() -> anyhow::Result<Self> {
+    pub fn with_defaults(keys: Arc<crate::secrets::ApiKeys>) -> anyhow::Result<Self> {
+        let ollama = Arc::new(ollama::OllamaTranslator::from_env()?);
         let engines: Vec<Arc<dyn Translator>> = vec![
-            Arc::new(ollama::OllamaTranslator::from_env()?),
-            Arc::new(deepl::DeeplTranslator::from_env()),
-            Arc::new(google::GoogleTranslator::from_env()),
+            ollama.clone(),
+            Arc::new(deepl::DeeplTranslator::new(Arc::clone(&keys))),
+            Arc::new(google::GoogleTranslator::new(keys)),
             Arc::new(null::NullTranslator),
         ];
         Ok(Self {
             engines,
+            ollama,
             default_id: RwLock::new("ollama".to_string()),
         })
     }
@@ -156,6 +160,10 @@ impl TranslatorRegistry {
                 tracing::warn!(engine = engine.id(), %err, "翻訳エンジンを準備できなかった")
             }
         }
+    }
+
+    pub fn ollama(&self) -> &ollama::OllamaTranslator {
+        &self.ollama
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<dyn Translator>> {
@@ -221,7 +229,12 @@ mod tests {
 
     #[test]
     fn default_engine_switches_only_to_registered_ids() {
-        let registry = TranslatorRegistry::with_defaults().unwrap();
+        let keys = crate::secrets::ApiKeys::load(
+            Box::new(crate::secrets::tests::MemoryBackend::default()),
+            &[],
+        )
+        .unwrap();
+        let registry = TranslatorRegistry::with_defaults(Arc::new(keys)).unwrap();
         assert_eq!(registry.default_id(), "ollama");
         registry.set_default("none").unwrap();
         assert_eq!(registry.default_id(), "none");

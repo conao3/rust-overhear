@@ -11,8 +11,8 @@ use overhear_core::Overhear;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::types::{
-    AnkiExportResult, AudioDevice, CaptureState, DictEntry, Segment, TranslationEngineInfo,
-    VocabItem,
+    AnkiExportResult, ApiKeyState, AudioDevice, CaptureState, DictEntry, Preferences, Segment,
+    TranslationEngineInfo, VocabItem,
 };
 
 pub type OverhearSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
@@ -36,7 +36,7 @@ fn capture_state(overhear: &Overhear) -> CaptureState {
             overhear_core::EngineChoice::April => "april".into(),
             overhear_core::EngineChoice::Mock => "mock".into(),
         },
-        target_lang: overhear.config.target_lang.clone(),
+        target_lang: overhear.target_lang(),
         muted: overhear.is_muted(),
         refiner: overhear.whisper.as_ref().map(|_| "whisper.cpp".to_string()),
         capture_target: overhear.capture_target(),
@@ -106,6 +106,11 @@ impl QueryRoot {
             .collect()
     }
 
+    /// 設定タブの値。
+    async fn preferences(&self, ctx: &Context<'_>) -> Preferences {
+        preferences(&engine(ctx)).await
+    }
+
     /// 登録済み翻訳ストラテジーの一覧と利用可否。
     async fn translation_engines(&self, ctx: &Context<'_>) -> Vec<TranslationEngineInfo> {
         translation_engines(&engine(ctx)).await
@@ -129,6 +134,25 @@ async fn translation_engines(overhear: &Overhear) -> Vec<TranslationEngineInfo> 
         });
     }
     out
+}
+
+/// 設定できる API キーのエンジン。
+const API_KEY_ENGINES: &[&str] = &["deepl", "google"];
+
+async fn preferences(overhear: &Overhear) -> Preferences {
+    let ollama = overhear.translators.ollama();
+    Preferences {
+        target_lang: overhear.target_lang(),
+        ollama_model: ollama.model(),
+        ollama_models: ollama.installed_models().await.unwrap_or_default(),
+        api_keys: API_KEY_ENGINES
+            .iter()
+            .map(|id| ApiKeyState {
+                engine_id: ID(id.to_string()),
+                configured: overhear.has_api_key(id),
+            })
+            .collect(),
+    }
 }
 
 pub struct MutationRoot;
@@ -159,6 +183,58 @@ impl MutationRoot {
             .set_default_translator(engine_id.as_str())
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         Ok(translation_engines(&overhear).await)
+    }
+
+    /// 訳す先の言語を切り替える。次の起動にも持ち越す。
+    async fn set_target_lang(
+        &self,
+        ctx: &Context<'_>,
+        lang: String,
+    ) -> async_graphql::Result<Preferences> {
+        let overhear = engine(ctx);
+        overhear
+            .set_target_lang(&lang)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(preferences(&overhear).await)
+    }
+
+    /// Ollama のモデルを切り替える。次の起動にも持ち越す。
+    async fn set_ollama_model(
+        &self,
+        ctx: &Context<'_>,
+        model: String,
+    ) -> async_graphql::Result<Preferences> {
+        let overhear = engine(ctx);
+        overhear
+            .set_ollama_model(&model)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(preferences(&overhear).await)
+    }
+
+    /// API キーを Secret Service に保存する。key を省くと消す。
+    async fn set_api_key(
+        &self,
+        ctx: &Context<'_>,
+        engine_id: ID,
+        key: Option<String>,
+    ) -> async_graphql::Result<Preferences> {
+        if !API_KEY_ENGINES.contains(&engine_id.as_str()) {
+            return Err(async_graphql::Error::new(format!(
+                "{} は API キーを使わない",
+                engine_id.as_str()
+            )));
+        }
+        let overhear = engine(ctx);
+        let id = engine_id.to_string();
+        // Secret Service は D-Bus の同期呼び出しなので、ランタイムを止めない。
+        let result = tokio::task::spawn_blocking({
+            let overhear = Arc::clone(&overhear);
+            move || overhear.set_api_key(&id, key.as_deref())
+        })
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        result.map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(preferences(&overhear).await)
     }
 
     /// segment の 1 語を語彙ストアへ保存する。

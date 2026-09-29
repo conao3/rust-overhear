@@ -16,6 +16,10 @@ pub struct Settings {
     pub translator: Option<String>,
     /// 拾うノード。None なら既定シンク。
     pub capture_target: Option<String>,
+    /// 訳す先の言語 (`ja` 等)。
+    pub target_lang: Option<String>,
+    /// Ollama で使うモデル。
+    pub ollama_model: Option<String>,
 }
 
 pub struct SettingsStore {

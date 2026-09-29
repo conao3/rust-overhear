@@ -85,3 +85,11 @@ export type AnkiExportResult = {
   exported: string[];
   failures: { vocabId: string; reason: string }[];
 };
+
+export type Preferences = {
+  targetLang: string;
+  ollamaModel: string;
+  /** pull 済みの Ollama モデル。Ollama に繋がらなければ空。 */
+  ollamaModels: string[];
+  apiKeys: { engineId: string; configured: boolean }[];
+};

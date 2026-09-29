@@ -7,6 +7,7 @@ import { CaptionBar } from "./components/CaptionBar";
 import { DevicePicker } from "./components/DevicePicker";
 import { EnginePicker } from "./components/EnginePicker";
 import { SegmentHistory } from "./components/SegmentHistory";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { VocabList } from "./components/VocabList";
 import {
   AudioUnavailableError,
@@ -232,6 +233,7 @@ export function App() {
           {[
             { id: "history", label: `履歴 (${segments.length})` },
             { id: "vocab", label: `語彙 (${vocab.length})` },
+            { id: "settings", label: "設定" },
           ].map((tab) => (
             <Tab
               key={tab.id}
@@ -277,6 +279,12 @@ export function App() {
               );
             }}
           />
+        </TabPanel>
+        <TabPanel
+          id="settings"
+          className="min-h-0 flex-1 overflow-y-auto outline-none"
+        >
+          <SettingsPanel />
         </TabPanel>
       </Tabs>
 
