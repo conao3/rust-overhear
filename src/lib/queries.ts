@@ -83,6 +83,13 @@ export const SET_DEFAULT_TRANSLATOR = gql`
   }
 `;
 
+/** 翻訳を待ち行列に積む。訳は segmentUpdates で届く。 */
+export const REQUEST_TRANSLATION = gql`
+  mutation RequestTranslation($segmentId: ID!) {
+    requestTranslation(segmentId: $segmentId)
+  }
+`;
+
 export const RETRANSLATE = gql`
   ${SEGMENT_FIELDS}
   mutation Retranslate($segmentId: ID!, $engineId: ID) {

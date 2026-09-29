@@ -28,6 +28,7 @@ import {
   TRANSLATION_ENGINES,
   VOCAB,
 } from "./lib/queries";
+import { useTranslationRequests } from "./lib/translation";
 import type {
   AnkiExportResult,
   AudioDevice,
@@ -57,6 +58,7 @@ export function App() {
     },
   );
   const [retranslate] = useMutation(RETRANSLATE);
+  const translation = useTranslationRequests();
   const [setDefaultTranslator] = useMutation(SET_DEFAULT_TRANSLATOR);
   const [muteCapture] = useMutation(MUTE_CAPTURE);
   const { data: deviceData } = useQuery<{ audioDevices: AudioDevice[] }>(
@@ -210,6 +212,8 @@ export function App() {
         segment={latest}
         onSaveWord={onSaveWord}
         savingWord={savingWord}
+        onTranslate={translation.request}
+        translating={latest ? translation.isPending(latest) : false}
       />
 
       {playError && (
@@ -243,6 +247,8 @@ export function App() {
             onPlay={(segment) =>
               void play(segment.audioUrl, segment.endMs - segment.startMs)
             }
+            onTranslate={translation.request}
+            isTranslating={translation.isPending}
             onRetranslate={(segment) => {
               void retranslate({
                 variables: { segmentId: segment.id, engineId },

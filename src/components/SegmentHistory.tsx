@@ -1,5 +1,5 @@
 /**
- * 発話の履歴。行ごとに聞き直しと翻訳の引き直しができる。
+ * 発話の履歴。行ごとに聞き直しと翻訳 (訳が無ければ訳す、あれば引き直す) ができる。
  *
  * 行の中にボタンを置くため ListBox ではなく GridList を使う
  * (GridList は行内のフォーカス可能な要素を扱える)。
@@ -12,10 +12,18 @@ import type { Segment } from "../lib/types";
 type Props = {
   segments: Segment[];
   onPlay: (segment: Segment) => void;
+  onTranslate: (segment: Segment) => void;
   onRetranslate: (segment: Segment) => void;
+  isTranslating: (segment: Segment) => boolean;
 };
 
-export function SegmentHistory({ segments, onPlay, onRetranslate }: Props) {
+export function SegmentHistory({
+  segments,
+  onPlay,
+  onTranslate,
+  onRetranslate,
+  isTranslating,
+}: Props) {
   return (
     <GridList
       aria-label="発話の履歴"
@@ -57,10 +65,19 @@ export function SegmentHistory({ segments, onPlay, onRetranslate }: Props) {
                 再生
               </Button>
               <Button
-                className="rounded bg-white/10 px-2 py-1 text-xs outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/20"
-                onPress={() => onRetranslate(segment)}
+                isDisabled={isTranslating(segment)}
+                className="rounded bg-white/10 px-2 py-1 text-xs outline-none data-[disabled]:opacity-50 data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/20"
+                onPress={() =>
+                  segment.translations.length > 0
+                    ? onRetranslate(segment)
+                    : onTranslate(segment)
+                }
               >
-                訳し直す
+                {isTranslating(segment)
+                  ? "翻訳中…"
+                  : segment.translations.length > 0
+                    ? "訳し直す"
+                    : "訳す"}
               </Button>
             </div>
           </div>

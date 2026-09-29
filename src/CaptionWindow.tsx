@@ -2,18 +2,21 @@
  * 常時最前面の字幕バー。動画の上に重ねて使う。
  *
  * スタジオ (App) と違って操作を持たず、いま話されている文と訳だけを出す。
- * 語をクリックすれば辞書は引けるが、保存や履歴はスタジオ側の仕事。
+ * 語をクリックすれば辞書は引け、「訳す」で今の文を訳せる。保存や履歴はスタジオ側の仕事。
  */
 import { useQuery, useSubscription } from "@apollo/client/react";
 import { useMemo } from "react";
+import { Button } from "react-aria-components";
 
 import { WordPopover } from "./components/WordPopover";
 import { SEGMENTS, SEGMENT_UPDATES } from "./lib/queries";
+import { useTranslationRequests } from "./lib/translation";
 import type { Segment } from "./lib/types";
 
 const RECENT_LIMIT = 2;
 
 export function CaptionWindow() {
+  const translationRequests = useTranslationRequests();
   const { data } = useQuery<{ segments: Segment[] }>(SEGMENTS, {
     variables: { limit: RECENT_LIMIT },
   });
@@ -68,10 +71,22 @@ export function CaptionWindow() {
                   ))
                 : current.sourceText}
             </p>
-            {translation && (
+            {translation ? (
               <p className="max-w-full truncate text-base text-ink-muted">
                 {translation.text}
               </p>
+            ) : (
+              current.status === "FINAL" &&
+              (translationRequests.isPending(current) ? (
+                <p className="text-sm text-ink-muted/60">翻訳中…</p>
+              ) : (
+                <Button
+                  className="rounded px-2 text-sm text-ink-muted/70 outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/10"
+                  onPress={() => translationRequests.request(current)}
+                >
+                  訳す
+                </Button>
+              ))
             )}
           </>
         ) : (

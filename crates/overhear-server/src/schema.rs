@@ -217,6 +217,19 @@ impl MutationRoot {
         capture_state(&overhear)
     }
 
+    /// segment の翻訳を待ち行列に積む。訳は segmentUpdates で届く。
+    async fn request_translation(
+        &self,
+        ctx: &Context<'_>,
+        segment_id: ID,
+    ) -> async_graphql::Result<bool> {
+        let id = segment_id
+            .parse::<u64>()
+            .map_err(|_| async_graphql::Error::new("segmentId が数値でない"))?;
+        engine(ctx).request_translation(id);
+        Ok(true)
+    }
+
     /// 任意のエンジンで翻訳を引き直す。結果は translations に追加される。
     async fn retranslate(
         &self,

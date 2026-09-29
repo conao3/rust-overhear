@@ -4,6 +4,7 @@
 //! 肝で、two-pass ASR の差し替えもフロント側では通常の更新として扱える。
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,10 @@ const TAIL_MARGIN_MS: u64 = 500;
 /// これより短い区間は whisper に掛けない。
 /// 相槌や物音の誤検出が大半で、CPU を使うわりに得るものが無い。
 const MIN_REFINE_MS: u64 = 600;
+
+/// 台詞がこれだけ途切れたら、最新の台詞を訳す。
+/// 動画を止めたときに、いま画面にある台詞の訳が出る。
+const PAUSE_TRANSLATE_MS: u64 = 1500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineChoice {
@@ -105,6 +110,12 @@ pub struct Overhear {
     refine_queue: WorkQueue,
     /// 翻訳待ち。1 本の worker が新しいものから訳す。
     translate_queue: WorkQueue,
+    /// whisper の worker が segment を処理している最中か。
+    refining: AtomicBool,
+    /// 最後に ASR が segment を出した時刻。台詞の途切れを測る。
+    last_speech: Mutex<Instant>,
+    /// 途切れで最後に訳へ回した segment。同じ台詞を二度積まない。
+    last_pause_translated: AtomicU64,
     /// この時刻までは入力を無音として扱う。聞き直しの再生音を
     /// 自分の monitor から拾い直さないための窓。
     mute_until: Arc<Mutex<Option<Instant>>>,
@@ -237,6 +248,9 @@ impl Overhear {
             settings: services.settings,
             refine_queue: WorkQueue::default(),
             translate_queue: WorkQueue::default(),
+            refining: AtomicBool::new(false),
+            last_speech: Mutex::new(Instant::now()),
+            last_pause_translated: AtomicU64::new(0),
             mute_until,
             capture: Mutex::new(Some(capture)),
             capture_config: Mutex::new(config.capture.clone()),
@@ -250,6 +264,10 @@ impl Overhear {
         {
             let this = Arc::clone(&this);
             tokio::spawn(async move { this.run_translation_worker().await });
+        }
+        {
+            let this = Arc::clone(&this);
+            tokio::spawn(async move { this.run_pause_watcher().await });
         }
 
         // ASR イベントを segment に畳む。
@@ -276,22 +294,27 @@ impl Overhear {
         Ok(this)
     }
 
-    /// segment を履歴へ反映し、購読者へ流す。Final なら後段の処理に積む。
+    /// segment を履歴へ反映し、購読者へ流す。Final なら whisper の差し替えに積む。
     ///
-    /// 確定文への差し替え (whisper) → 翻訳 の順に流す。翻訳の入力が
-    /// 句読点つきの読める文になる。
+    /// 翻訳は自動では掛けない。台詞が続く動画では CPU 推論の翻訳が追いつかず、
+    /// 訳が出る前に次の台詞へ進んでしまう。訳すのは求められたとき
+    /// ([`Self::request_translation`]) と、台詞が途切れたとき (最新の 1 行) だけ。
     fn publish(self: &Arc<Self>, segment: Segment) {
         let is_final = segment.status == SegmentStatus::Final;
+        if let Ok(mut last) = self.last_speech.lock() {
+            *last = Instant::now();
+        }
         self.upsert(segment.clone());
         let _ = self.updates.send(segment.clone());
 
-        if is_final && !segment.source_text.is_empty() {
-            if self.whisper.is_some() {
-                self.refine_queue.push(segment.id);
-            } else {
-                self.translate_queue.push(segment.id);
-            }
+        if is_final && !segment.source_text.is_empty() && self.whisper.is_some() {
+            self.refine_queue.push(segment.id);
         }
+    }
+
+    /// segment の翻訳を待ち行列に積む。結果は subscription で届く。
+    pub fn request_translation(&self, id: SegmentId) {
+        self.translate_queue.push(id);
     }
 
     /// 翻訳待ちの件数。
@@ -306,16 +329,50 @@ impl Overhear {
     async fn run_refine_worker(self: Arc<Self>) {
         loop {
             let id = self.refine_queue.pop().await;
+            self.refining.store(true, Ordering::Relaxed);
             self.refine_segment(id).await;
-            self.translate_queue.push(id);
+            self.refining.store(false, Ordering::Relaxed);
+        }
+    }
+
+    /// 台詞が途切れたら、最新の台詞を 1 行だけ訳へ回す。
+    ///
+    /// whisper の差し替えが済むのを待ってから積む。翻訳の入力を句読点つきの
+    /// 読める文にするため。
+    async fn run_pause_watcher(self: Arc<Self>) {
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        loop {
+            tick.tick().await;
+            let paused = self
+                .last_speech
+                .lock()
+                .is_ok_and(|last| last.elapsed() >= Duration::from_millis(PAUSE_TRANSLATE_MS));
+            let refined = self.refine_queue.len() == 0 && !self.refining.load(Ordering::Relaxed);
+            if !paused || !refined {
+                continue;
+            }
+            let latest = self
+                .segments
+                .read()
+                .ok()
+                .and_then(|segments| segments.back().cloned());
+            let Some(latest) = latest else { continue };
+            if latest.status != SegmentStatus::Final
+                || !latest.translations.is_empty()
+                || self.last_pause_translated.load(Ordering::Relaxed) == latest.id
+            {
+                continue;
+            }
+            self.last_pause_translated
+                .store(latest.id, Ordering::Relaxed);
+            self.translate_queue.push(latest.id);
         }
     }
 
     /// 翻訳を 1 本ずつ、新しい segment から順に流す。
     ///
-    /// ローカル LLM の翻訳は 1 行に数秒かかり、発話が続くと確定の間隔より
-    /// 遅くなる。古い順に訳すと字幕バーの訳が何行も遅れて追いつかないので、
-    /// いま表示している文を先に訳し、古いものは発話が途切れたときに埋める。
+    /// ローカル LLM の翻訳は 1 行に数秒かかる。続けて何行も求められたときは、
+    /// いま表示している文を先に訳す。
     async fn run_translation_worker(self: Arc<Self>) {
         loop {
             let id = self.translate_queue.pop().await;
