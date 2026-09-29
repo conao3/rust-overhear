@@ -1,0 +1,22 @@
+[package]
+name = "overhear-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Capture, recognition, and translation pipeline for overhear"
+
+[features]
+default = ["april"]
+# libaprilasr.so へのリンクを要する。flake の devShell が APRIL_LIB_DIR を渡す。
+april = []
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
