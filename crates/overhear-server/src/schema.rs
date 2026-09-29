@@ -40,6 +40,7 @@ fn capture_state(overhear: &Overhear) -> CaptureState {
         muted: overhear.is_muted(),
         refiner: overhear.whisper.as_ref().map(|_| "whisper.cpp".to_string()),
         capture_target: overhear.capture_target(),
+        translation_backlog: overhear.translation_backlog() as i32,
     }
 }
 

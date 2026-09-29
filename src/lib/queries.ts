@@ -55,6 +55,7 @@ export const CAPTURE_STATE = gql`
       muted
       refiner
       captureTarget
+      translationBacklog
     }
   }
 `;

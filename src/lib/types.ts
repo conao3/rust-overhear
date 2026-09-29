@@ -45,6 +45,7 @@ export type CaptureState = {
   muted: boolean;
   refiner: string | null;
   captureTarget: string | null;
+  translationBacklog: number;
 };
 
 export type AudioDevice = {

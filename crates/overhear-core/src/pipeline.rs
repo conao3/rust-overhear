@@ -101,6 +101,9 @@ pub struct Overhear {
     pub anki: Arc<AnkiConnect>,
     /// 差し替えは 1 本ずつ。バーストで whisper を並列に走らせない。
     refine_lock: tokio::sync::Semaphore,
+    /// 翻訳待ちの segment。1 本の worker が新しいものから訳す。
+    translate_queue: Mutex<TranslationQueue>,
+    translate_wake: tokio::sync::Notify,
     /// この時刻までは入力を無音として扱う。聞き直しの再生音を
     /// 自分の monitor から拾い直さないための窓。
     mute_until: Arc<Mutex<Option<Instant>>>,
@@ -216,11 +219,18 @@ impl Overhear {
             vocab: services.vocab,
             anki: services.anki,
             refine_lock: tokio::sync::Semaphore::new(1),
+            translate_queue: Mutex::new(TranslationQueue::default()),
+            translate_wake: tokio::sync::Notify::new(),
             mute_until,
             capture: Mutex::new(Some(capture)),
             capture_config: Mutex::new(config.capture.clone()),
             audio_tx,
         });
+
+        {
+            let this = Arc::clone(&this);
+            tokio::spawn(async move { this.run_translation_worker().await });
+        }
 
         // ASR イベントを segment に畳む。
         {
@@ -258,8 +268,44 @@ impl Overhear {
                 // 先に確定文へ差し替えてから翻訳する。翻訳の入力が
                 // 句読点つきの読める文になる。
                 this.refine_segment(id).await;
-                this.translate_segment(id, None).await;
+                this.enqueue_translation(id);
             });
+        }
+    }
+
+    fn enqueue_translation(&self, id: SegmentId) {
+        if let Ok(mut queue) = self.translate_queue.lock() {
+            queue.push(id);
+        }
+        self.translate_wake.notify_one();
+    }
+
+    /// 翻訳待ちの件数。
+    pub fn translation_backlog(&self) -> usize {
+        self.translate_queue.lock().map(|q| q.len()).unwrap_or(0)
+    }
+
+    /// 翻訳を 1 本ずつ、新しい segment から順に流す。
+    ///
+    /// ローカル LLM の翻訳は 1 行に数秒かかり、発話が続くと確定の間隔より
+    /// 遅くなる。古い順に訳すと字幕バーの訳が何行も遅れて追いつかないので、
+    /// いま表示している文を先に訳し、古いものは発話が途切れたときに埋める。
+    async fn run_translation_worker(self: Arc<Self>) {
+        loop {
+            let next = self
+                .translate_queue
+                .lock()
+                .ok()
+                .and_then(|mut q| q.pop_newest());
+            let Some(id) = next else {
+                self.translate_wake.notified().await;
+                continue;
+            };
+            // 履歴から溢れたもの、引き直しで既に訳があるものは飛ばす。
+            let needs_translation = self.segment(id).is_some_and(|s| s.translations.is_empty());
+            if needs_translation {
+                self.translate_segment(id, None).await;
+            }
         }
     }
 
@@ -541,6 +587,34 @@ impl Overhear {
     }
 }
 
+/// 翻訳待ちの segment id。同じ id は 1 度だけ積む。
+#[derive(Debug, Default)]
+struct TranslationQueue {
+    pending: Vec<SegmentId>,
+}
+
+impl TranslationQueue {
+    fn push(&mut self, id: SegmentId) {
+        if !self.pending.contains(&id) {
+            self.pending.push(id);
+        }
+    }
+
+    fn pop_newest(&mut self) -> Option<SegmentId> {
+        let index = self
+            .pending
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, id)| **id)
+            .map(|(index, _)| index)?;
+        Some(self.pending.swap_remove(index))
+    }
+
+    fn len(&self) -> usize {
+        self.pending.len()
+    }
+}
+
 /// whisper の確定文を語トークンに割り付ける。
 ///
 /// whisper-server は語ごとの時刻を返さないため、segment の区間に均等割りする。
@@ -749,5 +823,26 @@ mod refine_tests {
     #[test]
     fn empty_text_yields_no_tokens() {
         assert!(words_from_text("   ", 0, 1000).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod translation_queue_tests {
+    use super::*;
+
+    #[test]
+    fn pops_newest_first_and_ignores_duplicates() {
+        let mut queue = TranslationQueue::default();
+        queue.push(1);
+        queue.push(2);
+        queue.push(2);
+        queue.push(3);
+        assert_eq!(queue.len(), 3);
+        assert_eq!(queue.pop_newest(), Some(3));
+        queue.push(4);
+        assert_eq!(queue.pop_newest(), Some(4));
+        assert_eq!(queue.pop_newest(), Some(2));
+        assert_eq!(queue.pop_newest(), Some(1));
+        assert_eq!(queue.pop_newest(), None);
     }
 }

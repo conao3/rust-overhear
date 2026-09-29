@@ -74,6 +74,8 @@ pub struct CaptureState {
     pub refiner: Option<String>,
     /// 拾っているノード。None なら既定シンク。
     pub capture_target: Option<String>,
+    /// 翻訳を待っている segment の数。
+    pub translation_backlog: i32,
 }
 
 impl From<core::Token> for Token {

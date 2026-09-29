@@ -184,6 +184,8 @@ export function App() {
               {captureState.sampleRate} Hz · バッファ{" "}
               {formatMs(captureState.capturedMs)} / {captureState.ringSeconds}{" "}
               秒 · 訳先 {captureState.targetLang}
+              {captureState.translationBacklog > 0 &&
+                ` · 翻訳待ち ${captureState.translationBacklog}`}
             </p>
           )}
         </div>
