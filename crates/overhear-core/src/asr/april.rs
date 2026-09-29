@@ -27,6 +27,13 @@ const TOKEN_FLAG_SENTENCE_END: c_int = 0x0000_0002;
 /// 実時間で供給し、処理はバックグラウンドスレッドへ委ねる。
 const CONFIG_FLAG_ASYNC_RT: c_int = 0x0000_0001;
 
+/// april がトークンに付ける時刻の、実際の発話からの遅れ。
+///
+/// 語を認識し終えた時点の時刻が付くため、発話の頭より 0.3〜0.6 秒遅い
+/// (whisper-cli の語単位タイムスタンプとの比較で平均 0.45 秒前後)。
+/// 引かずに区間を切ると、whisper に渡す音声の文頭が欠け、次の文の頭が混ざる。
+const TOKEN_LATENCY_MS: u64 = 400;
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct AprilSpeakerID {
@@ -130,7 +137,7 @@ unsafe fn collect_tokens(count: usize, tokens: *const AprilToken) -> Vec<AsrToke
                 logprob: t.logprob,
                 word_boundary: t.flags & TOKEN_FLAG_WORD_BOUNDARY != 0,
                 sentence_end: t.flags & TOKEN_FLAG_SENTENCE_END != 0,
-                time_ms: t.time_ms as u64,
+                time_ms: (t.time_ms as u64).saturating_sub(TOKEN_LATENCY_MS),
             }
         })
         .collect()

@@ -20,7 +20,7 @@ pub struct AsrToken {
     pub logprob: f32,
     pub word_boundary: bool,
     pub sentence_end: bool,
-    /// セッションに供給した音声の累積 ms。リングバッファと同じ時間軸。
+    /// その語が話された位置。セッションに供給した音声の累積 ms で表す。
     pub time_ms: u64,
 }
 

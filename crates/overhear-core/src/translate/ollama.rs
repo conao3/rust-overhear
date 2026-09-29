@@ -61,12 +61,17 @@ impl OllamaTranslator {
         })
     }
 
+    /// 原文を先に、指示を後に置く。
+    ///
+    /// qwen3 のテンプレートは `think: false` のときユーザー発話の末尾に
+    /// ` /no_think` を足す。原文で終わるプロンプトだとそれを原文の一部として
+    /// 訳に混ぜてくる。
     fn prompt(text: &str, target_lang: &str) -> String {
         format!(
-            "Translate the following text into {}. Output only the translation, \
-             with no explanation, no quotes, and no preamble.\n\n{}",
-            language_name(target_lang),
-            text
+            "Text:\n{}\n\nTranslate the text above into {}. Output only the translation, \
+             with no explanation, no quotes, and no preamble.",
+            text,
+            language_name(target_lang)
         )
     }
 
@@ -161,7 +166,7 @@ mod tests {
     #[test]
     fn prompt_names_the_language() {
         let prompt = OllamaTranslator::prompt("Hi.", "ja");
+        assert!(prompt.starts_with("Text:\nHi.\n\n"));
         assert!(prompt.contains("into Japanese."));
-        assert!(prompt.ends_with("\n\nHi."));
     }
 }

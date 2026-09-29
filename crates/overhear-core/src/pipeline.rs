@@ -4,7 +4,6 @@
 //! 肝で、two-pass ASR の差し替えもフロント側では通常の更新として扱える。
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -17,7 +16,7 @@ use crate::asr::{AsrEvent, AsrToken, Recognizer};
 use crate::audio::{self, CaptureConfig, CaptureHandle};
 use crate::devices::{self, AudioDevice, DeviceKind};
 use crate::dict::{DictEntry, DictionaryRegistry, normalize_surface};
-use crate::gate::SilenceGate;
+use crate::gate::{ClockMap, SilenceGate};
 use crate::model::{Segment, SegmentId, SegmentStatus, Token};
 use crate::ring::RingBuffer;
 use crate::settings::SettingsStore;
@@ -102,11 +101,10 @@ pub struct Overhear {
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
     settings: Arc<SettingsStore>,
-    /// 差し替えは 1 本ずつ。バーストで whisper を並列に走らせない。
-    refine_lock: tokio::sync::Semaphore,
-    /// 翻訳待ちの segment。1 本の worker が新しいものから訳す。
-    translate_queue: Mutex<TranslationQueue>,
-    translate_wake: tokio::sync::Notify,
+    /// whisper での差し替え待ち。1 本の worker が新しいものから処理する。
+    refine_queue: WorkQueue,
+    /// 翻訳待ち。1 本の worker が新しいものから訳す。
+    translate_queue: WorkQueue,
     /// この時刻までは入力を無音として扱う。聞き直しの再生音を
     /// 自分の monitor から拾い直さないための窓。
     mute_until: Arc<Mutex<Option<Instant>>>,
@@ -158,21 +156,22 @@ impl Overhear {
         let (updates, _) = broadcast::channel::<Segment>(256);
 
         let mute_until: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-        // ASR へ供給しなかった累積サンプル数。ASR の内部時計はそのぶん
-        // 遅れるので、segment を組むときに足し戻す。
-        let skipped_samples = Arc::new(AtomicU64::new(0));
+        // ASR へ供給しなかったぶん ASR の内部時計は遅れる。どこでどれだけ
+        // 飛ばしたかを残し、segment を組むときにトークンごとに足し戻す。
+        let clock = Arc::new(Mutex::new(ClockMap::default()));
 
         // 音声を ring に溜めつつ ASR へ供給する。ASR 側はブロッキング API
         // なので専用スレッドに置く。
         {
             let ring = Arc::clone(&ring);
             let mute_until = Arc::clone(&mute_until);
-            let skipped_samples = Arc::clone(&skipped_samples);
+            let clock = Arc::clone(&clock);
             let mut gate =
                 SilenceGate::new(config.silence_threshold, crate::gate::DEFAULT_HANGOVER);
             let gate_enabled = config.silence_threshold > 0;
 
             tokio::task::spawn_blocking(move || {
+                let mut fed: u64 = 0;
                 while let Some(chunk) = audio_rx.blocking_recv() {
                     // リングバッファには常に入れる。聞き直しは無音区間も
                     // 含めて成立している必要がある。
@@ -203,14 +202,19 @@ impl Overhear {
                     // 静かな区間とミュート中は ASR を動かさない。ここが
                     // 待機時の CPU をほぼゼロにする。
                     let mut failed = false;
-                    for piece in gate.admit(&chunk, muted) {
+                    let pieces = gate.admit(&chunk, muted);
+                    // この admit で流すものは、ここまでの飛ばし量の時間軸に乗る。
+                    if let Ok(mut clock) = clock.lock() {
+                        clock.record(fed, gate.skipped_samples());
+                    }
+                    for piece in pieces {
                         if let Err(err) = recognizer.feed(&piece) {
                             tracing::warn!(?err, "ASR への供給に失敗した");
                             failed = true;
                             break;
                         }
+                        fed += piece.len() as u64;
                     }
-                    skipped_samples.store(gate.skipped_samples(), Ordering::Relaxed);
                     if failed {
                         break;
                     }
@@ -231,15 +235,18 @@ impl Overhear {
             vocab: services.vocab,
             anki: services.anki,
             settings: services.settings,
-            refine_lock: tokio::sync::Semaphore::new(1),
-            translate_queue: Mutex::new(TranslationQueue::default()),
-            translate_wake: tokio::sync::Notify::new(),
+            refine_queue: WorkQueue::default(),
+            translate_queue: WorkQueue::default(),
             mute_until,
             capture: Mutex::new(Some(capture)),
             capture_config: Mutex::new(config.capture.clone()),
             audio_tx,
         });
 
+        if this.whisper.is_some() {
+            let this = Arc::clone(&this);
+            tokio::spawn(async move { this.run_refine_worker().await });
+        }
         {
             let this = Arc::clone(&this);
             tokio::spawn(async move { this.run_translation_worker().await });
@@ -248,16 +255,17 @@ impl Overhear {
         // ASR イベントを segment に畳む。
         {
             let this = Arc::clone(&this);
-            let skipped_samples = Arc::clone(&skipped_samples);
-            let sample_rate = config.sample_rate as u64;
+            let sample_rate = config.sample_rate;
             tokio::spawn(async move {
                 let mut builder = SegmentBuilder::new(asr_engine);
                 while let Some(event) = asr_rx.recv().await {
                     // ASR の時計は供給を止めたぶん遅れている。リングバッファと
                     // 同じ絶対時間に戻してから segment にする。
-                    let offset_ms =
-                        skipped_samples.load(Ordering::Relaxed) * 1000 / sample_rate.max(1);
-                    if let Some(segment) = builder.apply(event, offset_ms) {
+                    let segment = {
+                        let Ok(clock) = clock.lock() else { break };
+                        builder.apply(event, |ms| clock.to_absolute_ms(ms, sample_rate))
+                    };
+                    if let Some(segment) = segment {
                         this.publish(segment);
                     }
                 }
@@ -268,34 +276,39 @@ impl Overhear {
         Ok(this)
     }
 
-    /// segment を履歴へ反映し、購読者へ流す。Final なら翻訳を起動する。
+    /// segment を履歴へ反映し、購読者へ流す。Final なら後段の処理に積む。
+    ///
+    /// 確定文への差し替え (whisper) → 翻訳 の順に流す。翻訳の入力が
+    /// 句読点つきの読める文になる。
     fn publish(self: &Arc<Self>, segment: Segment) {
         let is_final = segment.status == SegmentStatus::Final;
         self.upsert(segment.clone());
         let _ = self.updates.send(segment.clone());
 
         if is_final && !segment.source_text.is_empty() {
-            let this = Arc::clone(self);
-            let id = segment.id;
-            tokio::spawn(async move {
-                // 先に確定文へ差し替えてから翻訳する。翻訳の入力が
-                // 句読点つきの読める文になる。
-                this.refine_segment(id).await;
-                this.enqueue_translation(id);
-            });
+            if self.whisper.is_some() {
+                self.refine_queue.push(segment.id);
+            } else {
+                self.translate_queue.push(segment.id);
+            }
         }
-    }
-
-    fn enqueue_translation(&self, id: SegmentId) {
-        if let Ok(mut queue) = self.translate_queue.lock() {
-            queue.push(id);
-        }
-        self.translate_wake.notify_one();
     }
 
     /// 翻訳待ちの件数。
     pub fn translation_backlog(&self) -> usize {
-        self.translate_queue.lock().map(|q| q.len()).unwrap_or(0)
+        self.translate_queue.len()
+    }
+
+    /// whisper の差し替えを 1 本ずつ、新しい segment から順に流す。
+    ///
+    /// 古い順に処理すると、溜まった分を捌き終えるまで新しい文が差し替えも
+    /// 翻訳もされない。翻訳と同じく、いま表示している文を先に処理する。
+    async fn run_refine_worker(self: Arc<Self>) {
+        loop {
+            let id = self.refine_queue.pop().await;
+            self.refine_segment(id).await;
+            self.translate_queue.push(id);
+        }
     }
 
     /// 翻訳を 1 本ずつ、新しい segment から順に流す。
@@ -305,17 +318,12 @@ impl Overhear {
     /// いま表示している文を先に訳し、古いものは発話が途切れたときに埋める。
     async fn run_translation_worker(self: Arc<Self>) {
         loop {
-            let next = self
-                .translate_queue
-                .lock()
-                .ok()
-                .and_then(|mut q| q.pop_newest());
-            let Some(id) = next else {
-                self.translate_wake.notified().await;
-                continue;
-            };
-            // 履歴から溢れたもの、引き直しで既に訳があるものは飛ばす。
-            let needs_translation = self.segment(id).is_some_and(|s| s.translations.is_empty());
+            let id = self.translate_queue.pop().await;
+            // 履歴から溢れたもの、引き直しで既に訳があるもの、
+            // `[BLANK_AUDIO]` のような台詞の無い区間は飛ばす。
+            let needs_translation = self.segment(id).is_some_and(|s| {
+                s.translations.is_empty() && !crate::asr::whisper::is_non_speech(&s.source_text)
+            });
             if needs_translation {
                 self.translate_segment(id, None).await;
             }
@@ -431,7 +439,7 @@ impl Overhear {
     /// april は低遅延だが全部大文字で句読点が無い。文が閉じた後に
     /// リングバッファの該当区間を whisper へ投げ、同じ id の更新として
     /// 配信し直す。
-    pub async fn refine_segment(self: &Arc<Self>, id: SegmentId) -> Option<Segment> {
+    async fn refine_segment(self: &Arc<Self>, id: SegmentId) -> Option<Segment> {
         let whisper = self.whisper.as_ref()?;
         let segment = self.segment(id)?;
         if segment.asr_engine.contains("whisper") {
@@ -441,13 +449,10 @@ impl Overhear {
             return None; // 短すぎる区間は掛けるだけ無駄
         }
 
-        // 同時に複数走らせない。whisper は実時間の 1/3 程度で処理するので、
-        // 発話が続いても 1 本で追いつく。
-        let _permit = self.refine_lock.acquire().await.ok()?;
-
+        let (start_ms, end_ms) = self.refine_span(&segment);
         let audio = {
             let ring = self.ring.lock().ok()?;
-            ring.slice_ms(WhisperRefiner::lead_in(segment.start_ms), segment.end_ms)?
+            ring.slice_ms(start_ms, end_ms)?
         };
         let text = match whisper.refine(&audio, self.config.sample_rate).await {
             Ok(text) if !text.is_empty() => text,
@@ -466,6 +471,24 @@ impl Overhear {
         self.upsert(updated.clone());
         let _ = self.updates.send(updated.clone());
         Some(updated)
+    }
+
+    /// whisper に渡す区間。前後に余白を取り、隣の segment に食い込む分は削る。
+    ///
+    /// 台詞が詰まっていると、末尾の余白が次の台詞の頭を拾って whisper の文に
+    /// 混ざる (`... the magic. See you!`)。
+    fn refine_span(&self, segment: &Segment) -> (u64, u64) {
+        let mut start = WhisperRefiner::lead_in(segment.start_ms);
+        let mut end = segment.end_ms;
+        if let Ok(segments) = self.segments.read() {
+            if let Some(prev) = segments.iter().rev().find(|s| s.id < segment.id) {
+                start = start.max(prev.end_ms.saturating_sub(TAIL_MARGIN_MS));
+            }
+            if let Some(next) = segments.iter().find(|s| s.id > segment.id) {
+                end = end.min(next.start_ms);
+            }
+        }
+        (start.min(segment.start_ms), end.max(segment.start_ms + 1))
     }
 
     /// 単語を辞書で引く。
@@ -614,13 +637,43 @@ fn resolve_capture(base: &CaptureConfig, device_id: Option<&str>) -> Result<Capt
     Ok(config)
 }
 
-/// 翻訳待ちの segment id。同じ id は 1 度だけ積む。
+/// 新しい segment から取り出す待ち行列。worker は空のあいだ待つ。
+#[derive(Default)]
+struct WorkQueue {
+    pending: Mutex<NewestFirst>,
+    wake: tokio::sync::Notify,
+}
+
+impl WorkQueue {
+    fn push(&self, id: SegmentId) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.push(id);
+        }
+        self.wake.notify_one();
+    }
+
+    async fn pop(&self) -> SegmentId {
+        loop {
+            let next = self.pending.lock().ok().and_then(|mut p| p.pop_newest());
+            if let Some(id) = next {
+                return id;
+            }
+            self.wake.notified().await;
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.pending.lock().map(|p| p.len()).unwrap_or(0)
+    }
+}
+
+/// segment id の集合。同じ id は 1 度だけ積み、大きい (新しい) 順に出す。
 #[derive(Debug, Default)]
-struct TranslationQueue {
+struct NewestFirst {
     pending: Vec<SegmentId>,
 }
 
-impl TranslationQueue {
+impl NewestFirst {
     fn push(&mut self, id: SegmentId) {
         if !self.pending.contains(&id) {
             self.pending.push(id);
@@ -695,13 +748,14 @@ impl SegmentBuilder {
         }
     }
 
-    fn apply(&mut self, event: AsrEvent, offset_ms: u64) -> Option<Segment> {
+    /// `to_abs` は ASR の時刻をリングバッファの絶対時間へ直す。
+    fn apply(&mut self, event: AsrEvent, to_abs: impl Fn(u64) -> u64) -> Option<Segment> {
         match event {
             AsrEvent::Partial { text, tokens } => {
                 if text.is_empty() {
                     return None;
                 }
-                let segment = self.build(text, &tokens, SegmentStatus::Interim, offset_ms);
+                let segment = self.build(text, &tokens, SegmentStatus::Interim, &to_abs);
                 self.current = Some(segment.clone());
                 Some(segment)
             }
@@ -710,7 +764,7 @@ impl SegmentBuilder {
                     self.current = None;
                     return None;
                 }
-                let segment = self.build(text, &tokens, SegmentStatus::Final, offset_ms);
+                let segment = self.build(text, &tokens, SegmentStatus::Final, &to_abs);
                 // 次の Partial は新しい id で始まる。
                 self.current = None;
                 self.next_id += 1;
@@ -729,14 +783,10 @@ impl SegmentBuilder {
         text: String,
         tokens: &[AsrToken],
         status: SegmentStatus,
-        offset_ms: u64,
+        to_abs: &impl Fn(u64) -> u64,
     ) -> Segment {
-        let start_ms = tokens.first().map(|t| t.time_ms).unwrap_or(0) + offset_ms;
-        let last_ms = tokens
-            .last()
-            .map(|t| t.time_ms)
-            .unwrap_or(start_ms - offset_ms)
-            + offset_ms;
+        let start_ms = to_abs(tokens.first().map(|t| t.time_ms).unwrap_or(0));
+        let last_ms = tokens.last().map(|t| to_abs(t.time_ms)).unwrap_or(start_ms);
         let end_ms = if status == SegmentStatus::Final {
             last_ms + TAIL_MARGIN_MS
         } else {
@@ -749,7 +799,7 @@ impl SegmentBuilder {
             end_ms,
             status,
             source_text: text,
-            tokens: merge_words(tokens, offset_ms),
+            tokens: merge_words(tokens, to_abs),
             translations: self
                 .current
                 .as_ref()
@@ -766,7 +816,7 @@ impl SegmentBuilder {
 /// april-asr はサブワード単位で返す (`T` `RA` `N` `S` …) ため、そのままでは
 /// 単語クリックの辞書引きに使えない。語境界フラグ (または先頭の空白) で
 /// 区切り直して 1 語 1 トークンにする。
-fn merge_words(tokens: &[AsrToken], offset_ms: u64) -> Vec<Token> {
+fn merge_words(tokens: &[AsrToken], to_abs: &impl Fn(u64) -> u64) -> Vec<Token> {
     let mut out: Vec<Token> = Vec::new();
     for t in tokens {
         let starts_word = t.word_boundary || t.raw.starts_with(' ');
@@ -774,7 +824,7 @@ fn merge_words(tokens: &[AsrToken], offset_ms: u64) -> Vec<Token> {
             out.push(Token {
                 index: 0, // 後で振り直す
                 surface: t.surface.clone(),
-                start_ms: t.time_ms + offset_ms,
+                start_ms: to_abs(t.time_ms),
                 word_boundary: true,
                 sentence_end: t.sentence_end,
             });
@@ -818,7 +868,7 @@ mod tests {
             tok("N", false, 2560),
             tok("S", false, 2640),
         ];
-        let words = merge_words(&tokens, 0);
+        let words = merge_words(&tokens, &|ms| ms);
         let surfaces: Vec<&str> = words.iter().map(|t| t.surface.as_str()).collect();
         assert_eq!(surfaces, vec!["WELL,", "TRANS"]);
         assert_eq!(words[0].start_ms, 1680);
@@ -854,12 +904,12 @@ mod refine_tests {
 }
 
 #[cfg(test)]
-mod translation_queue_tests {
+mod newest_first_tests {
     use super::*;
 
     #[test]
     fn pops_newest_first_and_ignores_duplicates() {
-        let mut queue = TranslationQueue::default();
+        let mut queue = NewestFirst::default();
         queue.push(1);
         queue.push(2);
         queue.push(2);

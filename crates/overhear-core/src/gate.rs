@@ -5,7 +5,8 @@
 //! 重すぎるので、振幅を見て静かな区間は供給しない。
 //!
 //! 止めたぶん ASR の内部時計は進まなくなる。リングバッファの絶対時間
-//! との差は `skipped_samples` で持ち、segment を組むときに足し戻す。
+//! との差は [`ClockMap`] に区切りごとに残し、segment を組むときにトークンの
+//! 時刻ごとに足し戻す。
 
 /// これを超えたら「音がある」とみなす (i16 の振幅)。
 /// 小さすぎると環境ノイズで開きっぱなしになり、大きすぎると小声を切る。
@@ -79,6 +80,52 @@ impl SilenceGate {
     }
 }
 
+/// ASR の時計 (供給したサンプル数) から絶対時間 (受け取ったサンプル数) への対応。
+///
+/// 飛ばした量はゲートが閉じるたびに増えるので、segment ごとに一律の差では
+/// 戻せない。april は文の確定を次の音声が来てから出すことが多く、その時点の
+/// 差を足すと文間の無音ぶん区間が後ろへずれる。ゲートが開いた位置ごとに
+/// 「そこから先の飛ばし量」を持ち、トークンの時刻で引く。
+#[derive(Debug, Default)]
+pub struct ClockMap {
+    /// (この位置から先の供給サンプル, それまでに飛ばした累積サンプル)。位置の昇順。
+    points: Vec<(u64, u64)>,
+}
+
+/// 対応点をこれ以上持たない。古い点はリングバッファの外を指すので捨ててよい。
+const MAX_CLOCK_POINTS: usize = 4096;
+
+impl ClockMap {
+    /// 供給位置 `fed` から先は累積 `skipped` サンプルを飛ばした時間軸にある。
+    pub fn record(&mut self, fed: u64, skipped: u64) {
+        match self.points.last_mut() {
+            Some(&mut (_, last)) if last == skipped => return,
+            Some(last) if last.0 == fed => {
+                last.1 = skipped;
+                return;
+            }
+            _ => {}
+        }
+        self.points.push((fed, skipped));
+        if self.points.len() > MAX_CLOCK_POINTS {
+            self.points.drain(..MAX_CLOCK_POINTS / 2);
+        }
+    }
+
+    /// ASR の時刻 (ms) を絶対時間 (ms) にする。
+    pub fn to_absolute_ms(&self, asr_ms: u64, sample_rate: u32) -> u64 {
+        let rate = sample_rate.max(1) as u64;
+        let fed = asr_ms * rate / 1000;
+        let index = self.points.partition_point(|&(at, _)| at <= fed);
+        let skipped = if index == 0 {
+            0
+        } else {
+            self.points[index - 1].1
+        };
+        asr_ms + skipped * 1000 / rate
+    }
+}
+
 impl Default for SilenceGate {
     fn default() -> Self {
         Self::new(DEFAULT_THRESHOLD, DEFAULT_HANGOVER)
@@ -127,6 +174,29 @@ mod tests {
         assert_eq!(gate.admit(&quiet(), false).len(), 1);
         // 余韻が切れたら閉じる
         assert!(gate.admit(&quiet(), false).is_empty());
+    }
+
+    #[test]
+    fn clock_map_offsets_each_token_by_its_own_gap() {
+        let mut clock = ClockMap::default();
+        // 1 秒飛ばしてから 0 サンプル目を供給、2 秒ぶん話して、さらに 3 秒飛ばした。
+        clock.record(0, 16_000);
+        clock.record(32_000, 64_000);
+        // 最初の文は 1 秒の差だけ戻す。確定が後から来ても 4 秒にはならない。
+        assert_eq!(clock.to_absolute_ms(500, 16_000), 1_500);
+        assert_eq!(clock.to_absolute_ms(1_999, 16_000), 2_999);
+        // 次の文は 4 秒の差。
+        assert_eq!(clock.to_absolute_ms(2_000, 16_000), 6_000);
+    }
+
+    #[test]
+    fn clock_map_merges_points() {
+        let mut clock = ClockMap::default();
+        assert_eq!(clock.to_absolute_ms(100, 16_000), 100);
+        clock.record(0, 1_600);
+        clock.record(0, 3_200); // 同じ位置は上書き
+        clock.record(800, 3_200); // 差が変わらなければ足さない
+        assert_eq!(clock.points, vec![(0, 3_200)]);
     }
 
     #[test]

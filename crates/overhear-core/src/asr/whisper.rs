@@ -142,6 +142,20 @@ fn normalize(text: &str) -> String {
 /// 発話に混ざっている場合だけ取り除き、全体がマーカーだけの区間は
 /// そのまま残す。台詞が無いことを字幕で示すほうが分かりやすいため。
 fn strip_non_speech(text: &str) -> String {
+    let stripped = remove_markers(text);
+    if stripped.is_empty() {
+        text.to_string()
+    } else {
+        stripped
+    }
+}
+
+/// 非発話マーカーだけの文か (`[BLANK_AUDIO]` 等)。翻訳に回さない判定に使う。
+pub fn is_non_speech(text: &str) -> bool {
+    remove_markers(text).is_empty()
+}
+
+fn remove_markers(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut depth_square = 0usize;
     let mut depth_paren = 0usize;
@@ -155,12 +169,7 @@ fn strip_non_speech(text: &str) -> String {
             _ => {}
         }
     }
-    let stripped = normalize(&out);
-    if stripped.is_empty() {
-        text.to_string()
-    } else {
-        stripped
-    }
+    normalize(&out)
 }
 
 #[cfg(test)]
@@ -174,6 +183,13 @@ mod tests {
             normalize(raw),
             "If I have to spend another second waiting around doing nothing, I'm gonna lose my mind."
         );
+    }
+
+    #[test]
+    fn detects_marker_only_text() {
+        assert!(is_non_speech("[BLANK_AUDIO]"));
+        assert!(is_non_speech(" (upbeat music) [MUSIC PLAYING] "));
+        assert!(!is_non_speech("[MUSIC] Hello."));
     }
 
     #[test]
