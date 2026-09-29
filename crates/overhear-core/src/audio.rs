@@ -6,6 +6,8 @@
 
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 
@@ -35,9 +37,17 @@ impl Default for CaptureConfig {
 
 pub struct CaptureHandle {
     child: Child,
+    /// 読み取りスレッドが動いているか。pw-record が終了すると false になる。
+    alive: Arc<AtomicBool>,
 }
 
 impl CaptureHandle {
+    /// まだ PCM を受け取っているか。既定のデバイスが抜かれたり PipeWire が
+    /// 再起動したりすると pw-record は終了する。
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::Relaxed)
+    }
+
     pub fn stop(mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -83,6 +93,8 @@ pub fn spawn(cfg: &CaptureConfig, tx: mpsc::UnboundedSender<Vec<i16>>) -> Result
 
     // 128ms 相当 (16kHz なら 2048 サンプル) ずつ読む。
     let chunk_samples = (cfg.sample_rate as usize / 1000) * 128;
+    let alive = Arc::new(AtomicBool::new(true));
+    let reader_alive = Arc::clone(&alive);
     std::thread::spawn(move || {
         let mut raw = vec![0u8; chunk_samples * 2];
         loop {
@@ -105,8 +117,9 @@ pub fn spawn(cfg: &CaptureConfig, tx: mpsc::UnboundedSender<Vec<i16>>) -> Result
                 }
             }
         }
+        reader_alive.store(false, Ordering::Relaxed);
         tracing::info!("音声キャプチャのストリームが終了した");
     });
 
-    Ok(CaptureHandle { child })
+    Ok(CaptureHandle { child, alive })
 }

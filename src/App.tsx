@@ -184,6 +184,11 @@ export function App() {
               秒 · 訳先 {captureState.targetLang}
               {captureState.translationBacklog > 0 &&
                 ` · 翻訳待ち ${captureState.translationBacklog}`}
+              {!captureState.running && (
+                <span className="ml-2 rounded bg-amber-500/20 px-1.5 text-amber-300">
+                  音声を拾えていない (再接続している)
+                </span>
+              )}
             </p>
           )}
         </div>

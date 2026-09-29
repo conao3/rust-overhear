@@ -31,6 +31,10 @@ const TAIL_MARGIN_MS: u64 = 500;
 /// 相槌や物音の誤検出が大半で、CPU を使うわりに得るものが無い。
 const MIN_REFINE_MS: u64 = 600;
 
+/// キャプチャが止まってから起動し直すまでの待ち。失敗が続くと倍々に延ばす。
+const CAPTURE_RETRY_MIN: Duration = Duration::from_secs(1);
+const CAPTURE_RETRY_MAX: Duration = Duration::from_secs(30);
+
 /// 台詞がこれだけ途切れたら、最新の台詞を訳す。
 /// 動画を止めたときに、いま画面にある台詞の訳が出る。
 const PAUSE_TRANSLATE_MS: u64 = 1500;
@@ -269,6 +273,10 @@ impl Overhear {
             let this = Arc::clone(&this);
             tokio::spawn(async move { this.run_pause_watcher().await });
         }
+        {
+            let this = Arc::clone(&this);
+            tokio::spawn(async move { this.run_capture_supervisor().await });
+        }
 
         // ASR イベントを segment に畳む。
         {
@@ -332,6 +340,52 @@ impl Overhear {
             self.refining.store(true, Ordering::Relaxed);
             self.refine_segment(id).await;
             self.refining.store(false, Ordering::Relaxed);
+        }
+    }
+
+    /// キャプチャが動いているか。
+    pub fn is_capturing(&self) -> bool {
+        self.capture
+            .lock()
+            .ok()
+            .is_some_and(|slot| slot.as_ref().is_some_and(|c| c.is_alive()))
+    }
+
+    /// pw-record が終了したら起動し直す。
+    ///
+    /// 既定のデバイスを抜く、PipeWire が再起動する、といったことで pw-record は
+    /// 終了する。放っておくと字幕が黙って止まる。
+    async fn run_capture_supervisor(self: Arc<Self>) {
+        let mut tick = tokio::time::interval(CAPTURE_RETRY_MIN);
+        let mut wait = CAPTURE_RETRY_MIN;
+        let mut next_attempt = Instant::now();
+        loop {
+            tick.tick().await;
+            if self.is_capturing() {
+                wait = CAPTURE_RETRY_MIN;
+                continue;
+            }
+            if Instant::now() < next_attempt {
+                continue;
+            }
+            let config = match self.capture_config.lock() {
+                Ok(config) => config.clone(),
+                Err(_) => return,
+            };
+            match audio::spawn(&config, self.audio_tx.clone()) {
+                Ok(capture) => {
+                    tracing::info!(target = ?config.target, "音声キャプチャを起動し直した");
+                    if let Ok(mut slot) = self.capture.lock() {
+                        if let Some(old) = slot.replace(capture) {
+                            old.stop();
+                        }
+                    }
+                }
+                Err(err) => tracing::warn!(%err, "音声キャプチャを起動し直せなかった"),
+            }
+            // 起動直後に落ちる (デバイスが無い等) ときに詰めて再試行しない。
+            next_attempt = Instant::now() + wait;
+            wait = (wait * 2).min(CAPTURE_RETRY_MAX);
         }
     }
 

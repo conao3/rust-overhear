@@ -28,7 +28,7 @@ fn capture_state(overhear: &Overhear) -> CaptureState {
         .map(|r| r.total_ms() as i32)
         .unwrap_or(0);
     CaptureState {
-        running: true,
+        running: overhear.is_capturing(),
         sample_rate: overhear.config.sample_rate as i32,
         ring_seconds: overhear.config.ring_seconds as i32,
         captured_ms,
