@@ -14,9 +14,13 @@
 
 april-asr が interim を即座に出し、文が閉じたらリングバッファの該当区間を whisper.cpp に投げて確定文へ差し替える。差し替えは **同じ id の segment の更新**として GraphQL subscription に流れるので、フロントは Apollo の正規化キャッシュで受けるだけでよい。
 
-### 3. 翻訳も ASR もストラテジーパターン
+### 3. 翻訳も ASR も辞書もストラテジーパターン
 
-既定はローカル (Ollama)。DeepL / Google は必要に応じて選ぶ。`Translator` トレイトは `sends_data_externally` をケイパビリティとして表明するため、UI はローカルと外部送信を分けて見せられる。
+既定はローカル (Ollama)。DeepL / Google は必要に応じて選ぶ。`Translator` トレイトは `sends_data_externally` をケイパビリティとして表明するため、UI はローカルと外部送信を分けて見せられる。辞書 (`Dictionary`) と音声認識 (`Recognizer`) も同じ形にしてある。
+
+### 4. 保存した語だけを永続化する
+
+字幕は流れて消える揮発データとして扱い、SQLite に残すのは**保存した語彙だけ**。保存時にその文・訳・語義・音声クリップを焼き付けるので、元の segment が履歴から溢れても、リングバッファから音声が消えても後から復元できる。
 
 ## アーキテクチャ
 
@@ -25,7 +29,8 @@ PipeWire monitor
   └→ ring buffer (直近 N 分の PCM, 16kHz mono)
        ├→ april-asr (FFI)   … interim segment を即時 publish
        └→ whisper.cpp       … 文確定後に final segment へ差し替え (未実装)
-            └→ 文分割 → 翻訳 (非同期) → 履歴
+            └→ 文分割 → 翻訳 (非同期) → 履歴 (メモリ)
+                              └→ 語彙として保存 → SQLite + WAV → Anki
                                         ↑
    axum + async-graphql (127.0.0.1, ephemeral port)
       ├ POST /graphql  … Query / Mutation
@@ -44,8 +49,14 @@ Tauri が持つのはウィンドウとプロセス管理だけで、ドメイ�
 
 - Linux + PipeWire (`pw-record`)
 - april-asr の共有ライブラリとモデル
+- WordNet 3.0 (英英辞書)
+- Anki + AnkiConnect アドオン (カード書き出しを使う場合のみ)
 
 `libaprilasr.so` は nixpkgs に単体パッケージが無く、**`livecaptions` の出力に同梱**されている。flake の devShell がこれを `APRIL_LIB_DIR` で指し、モデルを `APRIL_MODEL_PATH` に注入する。
+
+WordNet も nixpkgs の `wordnet` に `dict/` が入っているため、追加のダウンロードは要らない (`WORDNET_DICT_DIR`)。
+
+語彙と音声クリップは `$XDG_DATA_HOME/overhear` (既定 `~/.local/share/overhear`) に置く。`OVERHEAR_DATA_DIR` で変えられる。
 
 ## 使い方
 
@@ -85,10 +96,21 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 - [x] Tauri + React + Apollo のフロント (キャプションバー、履歴、聞き直し、エンジン選択)
 - [x] 翻訳ストラテジー (ollama / deepl / google / none) とフォールバック
 - [x] 聞き直しの再生音を拾い直さないミュート (`muteCapture`)
+- [x] 辞書 (WordNet 3.0)。活用は見出し語へ解く
+- [x] 語彙ストア (SQLite)。文・訳・語義・音声を保存時に焼き付ける
+- [x] Anki 書き出し (AnkiConnect)。音声つきカードを作る
 - [ ] whisper.cpp による確定文への差し替え (two-pass の後段)
-- [ ] 辞書ポップアップ (WordNet / ejdict)、語彙ストア、Anki 書き出し
+- [ ] 英和辞書 (現状は英英のみ)
 - [ ] `pipewire-rs` 直結、デバイス選択、グローバルホットキー、nix パッケージ化
 - [ ] API キーの Secret Service (keyring) 保存 (現状は環境変数)
+
+## Anki への書き出し
+
+Anki を起動し AnkiConnect アドオンを入れておく (`OVERHEAR_ANKI_ENDPOINT`、既定 `http://127.0.0.1:8765`)。語彙タブで選んで「Anki へ書き出す」を押すと、デッキ `overhear` に Basic ノートを作る。
+
+- Front — 見出し語
+- Back — 語義 + 保存時の文 + 訳、そこに音声クリップを添付
+- タグ — `overhear`
 
 ## 既知の制約
 

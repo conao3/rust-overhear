@@ -8,10 +8,11 @@ import { WordPopover } from "./WordPopover";
 
 type Props = {
   segment: Segment | null;
-  onPlay?: (startMs: number) => void;
+  onSaveWord?: (segmentId: string, tokenIndex: number) => void;
+  savingWord?: boolean;
 };
 
-export function CaptionBar({ segment, onPlay }: Props) {
+export function CaptionBar({ segment, onSaveWord, savingWord }: Props) {
   if (!segment) {
     return (
       <div className="flex h-32 items-center justify-center text-ink-muted">
@@ -42,7 +43,12 @@ export function CaptionBar({ segment, onPlay }: Props) {
         {segment.tokens.length > 0
           ? segment.tokens.map((token) => (
               <span key={token.index}>
-                <WordPopover token={token} onPlay={onPlay} />{" "}
+                <WordPopover
+                  token={token}
+                  segmentId={segment.id}
+                  onSave={onSaveWord}
+                  saving={savingWord}
+                />{" "}
               </span>
             ))
           : segment.sourceText}

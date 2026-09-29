@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useSubscription } from "@apollo/client/react";
 
+import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
+
 import { CaptionBar } from "./components/CaptionBar";
 import { EnginePicker } from "./components/EnginePicker";
 import { SegmentHistory } from "./components/SegmentHistory";
+import { VocabList } from "./components/VocabList";
 import {
   AudioUnavailableError,
   fetchAudioObjectUrl,
@@ -11,13 +14,23 @@ import {
 } from "./lib/config";
 import {
   CAPTURE_STATE,
+  EXPORT_TO_ANKI,
   MUTE_CAPTURE,
+  REMOVE_VOCAB,
   RETRANSLATE,
+  SAVE_VOCAB,
   SEGMENTS,
   SEGMENT_UPDATES,
   TRANSLATION_ENGINES,
+  VOCAB,
 } from "./lib/queries";
-import type { CaptureState, Segment, TranslationEngineInfo } from "./lib/types";
+import type {
+  AnkiExportResult,
+  CaptureState,
+  Segment,
+  TranslationEngineInfo,
+  VocabItem,
+} from "./lib/types";
 
 const HISTORY_LIMIT = 50;
 
@@ -41,6 +54,15 @@ export function App() {
   );
   const [retranslate] = useMutation(RETRANSLATE);
   const [muteCapture] = useMutation(MUTE_CAPTURE);
+  const { data: vocabData, refetch: refetchVocab } = useQuery<{
+    vocab: VocabItem[];
+  }>(VOCAB, { variables: { limit: 200 } });
+  const [saveVocab, { loading: savingWord }] = useMutation(SAVE_VOCAB);
+  const [removeVocab] = useMutation(REMOVE_VOCAB);
+  const [exportToAnki, { loading: exporting }] = useMutation<{
+    exportToAnki: AnkiExportResult;
+  }>(EXPORT_TO_ANKI);
+  const [vocabMessage, setVocabMessage] = useState<string | null>(null);
 
   // interim → final の差し替えは Segment の正規化キャッシュが吸収する。
   // ここで面倒を見るのは「新しい id を一覧へ足す」ことだけ。
@@ -97,6 +119,49 @@ export function App() {
   );
 
   const captureState = stateData?.captureState;
+  const vocab = vocabData?.vocab ?? [];
+
+  const onSaveWord = useCallback(
+    async (segmentId: string, tokenIndex: number) => {
+      setVocabMessage(null);
+      try {
+        const res = await saveVocab({ variables: { segmentId, tokenIndex } });
+        await refetchVocab();
+        const saved = (res.data as { saveVocab?: VocabItem } | null | undefined)
+          ?.saveVocab;
+        setVocabMessage(saved ? `「${saved.lemma}」を語彙に保存した` : null);
+      } catch (err) {
+        setVocabMessage(
+          `保存できなかった (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+    },
+    [refetchVocab, saveVocab],
+  );
+
+  const onExport = useCallback(
+    async (ids: string[]) => {
+      setVocabMessage(null);
+      try {
+        const res = await exportToAnki({
+          variables: { vocabIds: ids, deck: "overhear" },
+        });
+        await refetchVocab();
+        const result = res.data?.exportToAnki;
+        if (!result) return;
+        setVocabMessage(
+          result.failures.length > 0
+            ? `${result.exported.length} 件を書き出し、${result.failures.length} 件が失敗: ${result.failures[0].reason}`
+            : `${result.exported.length} 件を Anki へ書き出した`,
+        );
+      } catch (err) {
+        setVocabMessage(
+          `書き出せなかった (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+    },
+    [exportToAnki, refetchVocab],
+  );
 
   return (
     <div className="mx-auto flex h-full max-w-4xl flex-col gap-4 p-6">
@@ -120,9 +185,8 @@ export function App() {
 
       <CaptionBar
         segment={latest}
-        onPlay={() =>
-          latest && void play(latest.audioUrl, latest.endMs - latest.startMs)
-        }
+        onSaveWord={onSaveWord}
+        savingWord={savingWord}
       />
 
       {playError && (
@@ -131,19 +195,56 @@ export function App() {
         </p>
       )}
 
-      <section className="min-h-0 flex-1 overflow-y-auto">
-        <SegmentHistory
-          segments={[...segments].reverse()}
-          onPlay={(segment) =>
-            void play(segment.audioUrl, segment.endMs - segment.startMs)
-          }
-          onRetranslate={(segment) => {
-            void retranslate({
-              variables: { segmentId: segment.id, engineId },
-            });
-          }}
-        />
-      </section>
+      <Tabs className="flex min-h-0 flex-1 flex-col gap-3">
+        <TabList aria-label="表示の切り替え" className="flex gap-1">
+          {[
+            { id: "history", label: `履歴 (${segments.length})` },
+            { id: "vocab", label: `語彙 (${vocab.length})` },
+          ].map((tab) => (
+            <Tab
+              key={tab.id}
+              id={tab.id}
+              className="cursor-pointer rounded px-3 py-1.5 text-sm outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/10 data-[selected]:bg-accent/20"
+            >
+              {tab.label}
+            </Tab>
+          ))}
+        </TabList>
+
+        <TabPanel
+          id="history"
+          className="min-h-0 flex-1 overflow-y-auto outline-none"
+        >
+          <SegmentHistory
+            segments={[...segments].reverse()}
+            onPlay={(segment) =>
+              void play(segment.audioUrl, segment.endMs - segment.startMs)
+            }
+            onRetranslate={(segment) => {
+              void retranslate({
+                variables: { segmentId: segment.id, engineId },
+              });
+            }}
+          />
+        </TabPanel>
+
+        <TabPanel
+          id="vocab"
+          className="min-h-0 flex-1 overflow-y-auto outline-none"
+        >
+          <VocabList
+            items={vocab}
+            exporting={exporting}
+            message={vocabMessage}
+            onExport={(ids) => void onExport(ids)}
+            onRemove={(id) => {
+              void removeVocab({ variables: { id } }).then(() =>
+                refetchVocab(),
+              );
+            }}
+          />
+        </TabPanel>
+      </Tabs>
 
       <audio ref={audioRef} hidden />
     </div>

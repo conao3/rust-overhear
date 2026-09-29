@@ -2,11 +2,14 @@
 //!
 //! GraphQL / Tauri といった外側の層はこの crate を射影するだけにしてある。
 
+pub mod anki;
 pub mod asr;
 pub mod audio;
+pub mod dict;
 pub mod model;
 pub mod pipeline;
 pub mod ring;
 pub mod translate;
+pub mod vocab;
 
 pub use pipeline::{EngineChoice, Overhear, RuntimeConfig};

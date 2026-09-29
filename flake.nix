@@ -61,6 +61,7 @@
               pkg-config
               pipewire # pw-record (音声キャプチャ)
               sqlite
+              wordnet
             ];
 
             buildInputs = with pkgs; [
@@ -76,6 +77,9 @@
 
             env = {
               APRIL_LIB_DIR = aprilLibDir;
+              # WordNet 3.0 の dict ファイル (英英辞書)。nixpkgs に入っているため
+              # 追加のダウンロードは要らない。
+              WORDNET_DICT_DIR = "${pkgs.wordnet}/dict";
               APRIL_MODEL_PATH = "${pkgs.april-model}";
               LD_LIBRARY_PATH = aprilLibDir;
               GIO_MODULE_PATH = "${pkgs.glib-networking}/lib/gio/modules";

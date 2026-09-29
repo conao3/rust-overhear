@@ -1,7 +1,10 @@
 //! GraphQL のスキーマ型。core のドメイン型を射影する。
 
 use async_graphql::{Enum, ID, SimpleObject};
+use overhear_core::dict as core_dict;
 use overhear_core::model as core;
+use overhear_core::pipeline as core_pipeline;
+use overhear_core::vocab as core_vocab;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
 #[graphql(remote = "core::SegmentStatus")]
@@ -103,6 +106,118 @@ impl From<core::Segment> for Segment {
             tokens: s.tokens.into_iter().map(Token::from).collect(),
             translations: s.translations.into_iter().map(Translation::from).collect(),
             asr_engine: s.asr_engine,
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+#[graphql(remote = "core_dict::Pos")]
+pub enum Pos {
+    Noun,
+    Verb,
+    Adjective,
+    Adverb,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct DictSense {
+    pub definition: String,
+    /// 同じ synset に属する語。
+    pub synonyms: Vec<String>,
+    pub examples: Vec<String>,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct DictEntry {
+    /// 活用を解いた見出し語。
+    pub lemma: String,
+    pub pos: Pos,
+    pub pos_label: String,
+    pub senses: Vec<DictSense>,
+    pub source: String,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct VocabItem {
+    pub id: ID,
+    pub lemma: String,
+    pub surface: String,
+    /// 保存した時点の文。元の segment が消えても読める。
+    pub sentence: String,
+    pub translation: Option<String>,
+    pub definition: Option<String>,
+    /// 焼き付けた音声があるか。実体は Anki 書き出し時に使う。
+    pub has_audio: bool,
+    pub created_at: String,
+    pub anki_note_id: Option<String>,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct AnkiExportFailure {
+    pub vocab_id: ID,
+    pub reason: String,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct AnkiExportResult {
+    pub exported: Vec<ID>,
+    pub failures: Vec<AnkiExportFailure>,
+}
+
+impl From<core_dict::DictSense> for DictSense {
+    fn from(s: core_dict::DictSense) -> Self {
+        Self {
+            definition: s.definition,
+            synonyms: s.synonyms,
+            examples: s.examples,
+        }
+    }
+}
+
+impl From<core_dict::DictEntry> for DictEntry {
+    fn from(e: core_dict::DictEntry) -> Self {
+        Self {
+            pos_label: e.pos.label().to_string(),
+            lemma: e.lemma,
+            pos: e.pos.into(),
+            senses: e.senses.into_iter().map(DictSense::from).collect(),
+            source: e.source,
+        }
+    }
+}
+
+impl From<core_vocab::VocabItem> for VocabItem {
+    fn from(v: core_vocab::VocabItem) -> Self {
+        Self {
+            id: ID(v.id.to_string()),
+            lemma: v.lemma,
+            surface: v.surface,
+            sentence: v.sentence,
+            translation: v.translation,
+            definition: v.definition,
+            has_audio: v.audio_path.is_some(),
+            created_at: v.created_at,
+            anki_note_id: v.anki_note_id.map(|n| n.to_string()),
+        }
+    }
+}
+
+impl From<core_pipeline::AnkiExportResult> for AnkiExportResult {
+    fn from(r: core_pipeline::AnkiExportResult) -> Self {
+        Self {
+            exported: r
+                .exported
+                .into_iter()
+                .map(|id| ID(id.to_string()))
+                .collect(),
+            failures: r
+                .failures
+                .into_iter()
+                .map(|f| AnkiExportFailure {
+                    vocab_id: ID(f.vocab_id.to_string()),
+                    reason: f.reason,
+                })
+                .collect(),
         }
     }
 }

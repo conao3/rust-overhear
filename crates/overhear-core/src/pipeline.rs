@@ -10,11 +10,14 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use tokio::sync::{broadcast, mpsc};
 
+use crate::anki::{AnkiConnect, AnkiNote, DEFAULT_DECK, DEFAULT_MODEL};
 use crate::asr::{AsrEvent, AsrToken, Recognizer};
 use crate::audio::{self, CaptureConfig, CaptureHandle};
+use crate::dict::{DictEntry, DictionaryRegistry};
 use crate::model::{Segment, SegmentId, SegmentStatus, Token};
 use crate::ring::RingBuffer;
 use crate::translate::{TranslateRequest, TranslatorRegistry};
+use crate::vocab::{NewVocab, VocabItem, VocabStore};
 
 /// Final の末尾に足す余白。発話末が切れた音声を書き出さないため。
 const TAIL_MARGIN_MS: u64 = 500;
@@ -50,12 +53,38 @@ impl Default for RuntimeConfig {
     }
 }
 
+/// パイプラインが使う外部サービス一式。
+///
+/// 翻訳・辞書・語彙ストア・Anki はいずれも差し替え可能な境界なので、
+/// まとめて渡して `Overhear` 本体の引数が増えないようにしてある。
+pub struct Services {
+    pub translators: Arc<TranslatorRegistry>,
+    pub dictionaries: Arc<DictionaryRegistry>,
+    pub vocab: Arc<VocabStore>,
+    pub anki: Arc<AnkiConnect>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AnkiExportFailure {
+    pub vocab_id: i64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AnkiExportResult {
+    pub exported: Vec<i64>,
+    pub failures: Vec<AnkiExportFailure>,
+}
+
 pub struct Overhear {
     pub config: RuntimeConfig,
     pub ring: Arc<Mutex<RingBuffer>>,
     pub segments: Arc<RwLock<VecDeque<Segment>>>,
     pub updates: broadcast::Sender<Segment>,
     pub translators: Arc<TranslatorRegistry>,
+    pub dictionaries: Arc<DictionaryRegistry>,
+    pub vocab: Arc<VocabStore>,
+    pub anki: Arc<AnkiConnect>,
     /// この時刻までは入力を無音として扱う。聞き直しの再生音を
     /// 自分の monitor から拾い直さないための窓。
     mute_until: Arc<Mutex<Option<Instant>>>,
@@ -64,7 +93,7 @@ pub struct Overhear {
 
 impl Overhear {
     /// キャプチャと ASR を起動する。tokio のランタイム上で呼ぶこと。
-    pub fn start(config: RuntimeConfig, translators: Arc<TranslatorRegistry>) -> Result<Arc<Self>> {
+    pub fn start(config: RuntimeConfig, services: Services) -> Result<Arc<Self>> {
         let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<Vec<i16>>();
         let (asr_tx, mut asr_rx) = mpsc::unbounded_channel::<AsrEvent>();
 
@@ -135,7 +164,10 @@ impl Overhear {
             ring,
             segments: Arc::clone(&segments),
             updates: updates.clone(),
-            translators,
+            translators: services.translators,
+            dictionaries: services.dictionaries,
+            vocab: services.vocab,
+            anki: services.anki,
             mute_until,
             _capture: capture,
         });
@@ -227,6 +259,105 @@ impl Overhear {
         ring.slice_ms(segment.start_ms, segment.end_ms)
     }
 
+    /// 単語を辞書で引く。
+    pub fn lookup(&self, word: &str) -> Vec<DictEntry> {
+        self.dictionaries.lookup(word)
+    }
+
+    /// segment の 1 語を語彙ストアへ保存する。
+    ///
+    /// 保存時点の文・訳・語義・音声を焼き付けるので、後から segment が
+    /// 履歴から溢れても、リングバッファから音声が消えても残る。
+    pub fn save_vocab(&self, segment_id: SegmentId, token_index: usize) -> Result<VocabItem> {
+        let segment = self
+            .segment(segment_id)
+            .ok_or_else(|| anyhow::anyhow!("segment {segment_id} が見つからない"))?;
+        let token = segment
+            .tokens
+            .get(token_index)
+            .ok_or_else(|| anyhow::anyhow!("token {token_index} が見つからない"))?;
+
+        let entries = self.dictionaries.lookup(&token.surface);
+        let lemma = entries
+            .first()
+            .map(|e| e.lemma.clone())
+            .unwrap_or_else(|| normalize_surface(&token.surface));
+        let definition = entries
+            .first()
+            .and_then(|e| e.senses.first())
+            .map(|s| s.definition.clone());
+
+        self.vocab.save(NewVocab {
+            lemma,
+            surface: token.surface.clone(),
+            sentence: segment.source_text.clone(),
+            translation: segment.translations.last().map(|t| t.text.clone()),
+            definition,
+            audio: self.segment_audio(segment_id),
+            sample_rate: self.config.sample_rate,
+        })
+    }
+
+    /// 語彙を Anki へ送る。1 件ずつ失敗理由を返す。
+    pub async fn export_to_anki(&self, ids: &[i64], deck: Option<&str>) -> AnkiExportResult {
+        let deck = deck.unwrap_or(DEFAULT_DECK);
+        let mut result = AnkiExportResult {
+            exported: Vec::new(),
+            failures: Vec::new(),
+        };
+
+        if let Err(err) = self.anki.ensure_deck(deck).await {
+            for id in ids {
+                result.failures.push(AnkiExportFailure {
+                    vocab_id: *id,
+                    reason: err.to_string(),
+                });
+            }
+            return result;
+        }
+
+        for id in ids {
+            let item = match self.vocab.get(*id) {
+                Ok(Some(item)) => item,
+                Ok(None) => {
+                    result.failures.push(AnkiExportFailure {
+                        vocab_id: *id,
+                        reason: "語彙が見つからない".into(),
+                    });
+                    continue;
+                }
+                Err(err) => {
+                    result.failures.push(AnkiExportFailure {
+                        vocab_id: *id,
+                        reason: err.to_string(),
+                    });
+                    continue;
+                }
+            };
+
+            let note = AnkiNote {
+                deck: deck.to_string(),
+                model: DEFAULT_MODEL.to_string(),
+                front: item.lemma.clone(),
+                back: build_back(&item),
+                audio_path: item.audio_path.clone(),
+                tags: vec!["overhear".to_string()],
+            };
+
+            match self.anki.add_note(&note).await {
+                Ok(note_id) => {
+                    let _ = self.vocab.mark_anki(item.id, note_id);
+                    result.exported.push(item.id);
+                }
+                Err(err) => result.failures.push(AnkiExportFailure {
+                    vocab_id: item.id,
+                    reason: err.to_string(),
+                }),
+            }
+        }
+        result
+    }
+
     /// 指定エンジンで翻訳し、結果を segment に追加して再配信する。
     pub async fn translate_segment(
         self: &Arc<Self>,
@@ -250,6 +381,30 @@ impl Overhear {
         let _ = self.updates.send(updated.clone());
         Some(updated)
     }
+}
+
+/// 辞書に載らない語のフォールバック。句読点と所有格を落として小文字にする。
+fn normalize_surface(surface: &str) -> String {
+    let trimmed = surface
+        .trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '\'')
+        .to_lowercase();
+    trimmed
+        .strip_suffix("'s")
+        .map(str::to_string)
+        .unwrap_or(trimmed)
+}
+
+/// Anki の裏面。語義・原文・訳をこの順で並べる。
+fn build_back(item: &VocabItem) -> String {
+    let mut parts = Vec::new();
+    if let Some(def) = &item.definition {
+        parts.push(def.clone());
+    }
+    parts.push(format!("<br><br>{}", item.sentence));
+    if let Some(tr) = &item.translation {
+        parts.push(format!("<br>{tr}"));
+    }
+    parts.join("")
 }
 
 /// ASR イベントを segment に畳む状態機械。

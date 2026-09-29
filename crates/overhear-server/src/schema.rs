@@ -10,7 +10,9 @@ use futures_util::{Stream, StreamExt};
 use overhear_core::Overhear;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::types::{CaptureState, Segment, TranslationEngineInfo};
+use crate::types::{
+    AnkiExportResult, CaptureState, DictEntry, Segment, TranslationEngineInfo, VocabItem,
+};
 
 pub type OverhearSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
@@ -63,6 +65,34 @@ impl QueryRoot {
         capture_state(&engine(ctx))
     }
 
+    /// 単語を辞書で引く。活用は見出し語へ解かれる。
+    async fn lookup(&self, ctx: &Context<'_>, word: String) -> Vec<DictEntry> {
+        engine(ctx)
+            .lookup(&word)
+            .into_iter()
+            .map(DictEntry::from)
+            .collect()
+    }
+
+    /// 保存した語彙を新しい順に返す。
+    async fn vocab(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Vec<VocabItem> {
+        let overhear = engine(ctx);
+        let limit = limit.unwrap_or(100).clamp(1, 1000) as usize;
+        let offset = offset.unwrap_or(0).max(0) as usize;
+        overhear
+            .vocab
+            .list(limit, offset)
+            .unwrap_or_default()
+            .into_iter()
+            .map(VocabItem::from)
+            .collect()
+    }
+
     /// 登録済み翻訳ストラテジーの一覧と利用可否。
     async fn translation_engines(&self, ctx: &Context<'_>) -> Vec<TranslationEngineInfo> {
         let overhear = engine(ctx);
@@ -89,6 +119,52 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
+    /// segment の 1 語を語彙ストアへ保存する。
+    ///
+    /// 保存時点の文・訳・語義・音声を焼き付けるので、後から segment が
+    /// 消えても残る。
+    async fn save_vocab(
+        &self,
+        ctx: &Context<'_>,
+        segment_id: ID,
+        token_index: i32,
+    ) -> async_graphql::Result<VocabItem> {
+        let overhear = engine(ctx);
+        let id = segment_id
+            .parse::<u64>()
+            .map_err(|_| async_graphql::Error::new("segmentId が数値でない"))?;
+        let item = overhear
+            .save_vocab(id, token_index.max(0) as usize)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(VocabItem::from(item))
+    }
+
+    async fn remove_vocab(&self, ctx: &Context<'_>, id: ID) -> async_graphql::Result<bool> {
+        let overhear = engine(ctx);
+        let id = id
+            .parse::<i64>()
+            .map_err(|_| async_graphql::Error::new("id が数値でない"))?;
+        overhear
+            .vocab
+            .remove(id)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
+    }
+
+    /// 語彙を Anki へ送る。1 件ずつ失敗理由を返す。
+    async fn export_to_anki(
+        &self,
+        ctx: &Context<'_>,
+        vocab_ids: Vec<ID>,
+        deck: Option<String>,
+    ) -> AnkiExportResult {
+        let overhear = engine(ctx);
+        let ids: Vec<i64> = vocab_ids
+            .iter()
+            .filter_map(|i| i.parse::<i64>().ok())
+            .collect();
+        overhear.export_to_anki(&ids, deck.as_deref()).await.into()
+    }
+
     /// 指定時間だけ入力を無音として扱う。
     ///
     /// 聞き直しの再生音は既定シンクの monitor に戻ってくるため、

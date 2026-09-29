@@ -44,3 +44,33 @@ export type CaptureState = {
   targetLang: string;
   muted: boolean;
 };
+
+export type DictSense = {
+  definition: string;
+  synonyms: string[];
+  examples: string[];
+};
+
+export type DictEntry = {
+  lemma: string;
+  posLabel: string;
+  source: string;
+  senses: DictSense[];
+};
+
+export type VocabItem = {
+  id: string;
+  lemma: string;
+  surface: string;
+  sentence: string;
+  translation: string | null;
+  definition: string | null;
+  hasAudio: boolean;
+  createdAt: string;
+  ankiNoteId: string | null;
+};
+
+export type AnkiExportResult = {
+  exported: string[];
+  failures: { vocabId: string; reason: string }[];
+};

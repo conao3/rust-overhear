@@ -87,3 +87,68 @@ export const MUTE_CAPTURE = gql`
     }
   }
 `;
+
+export const LOOKUP = gql`
+  query Lookup($word: String!) {
+    lookup(word: $word) {
+      lemma
+      posLabel
+      source
+      senses {
+        definition
+        synonyms
+        examples
+      }
+    }
+  }
+`;
+
+export const VOCAB_FIELDS = gql`
+  fragment VocabFields on VocabItem {
+    id
+    lemma
+    surface
+    sentence
+    translation
+    definition
+    hasAudio
+    createdAt
+    ankiNoteId
+  }
+`;
+
+export const VOCAB = gql`
+  ${VOCAB_FIELDS}
+  query Vocab($limit: Int) {
+    vocab(limit: $limit) {
+      ...VocabFields
+    }
+  }
+`;
+
+export const SAVE_VOCAB = gql`
+  ${VOCAB_FIELDS}
+  mutation SaveVocab($segmentId: ID!, $tokenIndex: Int!) {
+    saveVocab(segmentId: $segmentId, tokenIndex: $tokenIndex) {
+      ...VocabFields
+    }
+  }
+`;
+
+export const REMOVE_VOCAB = gql`
+  mutation RemoveVocab($id: ID!) {
+    removeVocab(id: $id)
+  }
+`;
+
+export const EXPORT_TO_ANKI = gql`
+  mutation ExportToAnki($vocabIds: [ID!]!, $deck: String) {
+    exportToAnki(vocabIds: $vocabIds, deck: $deck) {
+      exported
+      failures {
+        vocabId
+        reason
+      }
+    }
+  }
+`;

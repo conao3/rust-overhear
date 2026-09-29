@@ -21,3 +21,6 @@ async-graphql = "7"
 async-graphql-axum = "7"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = "0.4"
+tempdir = "0.3"

@@ -20,8 +20,12 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use clap::Parser;
+use overhear_core::anki::AnkiConnect;
+use overhear_core::dict::DictionaryRegistry;
+use overhear_core::pipeline::Services;
 use overhear_core::ring::encode_wav;
 use overhear_core::translate::TranslatorRegistry;
+use overhear_core::vocab::VocabStore;
 use overhear_core::{EngineChoice, Overhear, RuntimeConfig};
 use rand::Rng;
 
@@ -194,7 +198,21 @@ async fn main() -> Result<()> {
         ..RuntimeConfig::default()
     };
 
-    let overhear = Overhear::start(config, Arc::new(registry)).context("パイプラインの起動")?;
+    let dictionaries = DictionaryRegistry::from_env();
+    if dictionaries.is_empty() {
+        tracing::warn!("辞書が 1 つも読み込めなかった。単語の語義は出ない");
+    }
+    let vocab = VocabStore::open_default().context("語彙ストアを開けない")?;
+    tracing::info!(saved = vocab.count().unwrap_or(0), "語彙ストアを読み込んだ");
+
+    let services = Services {
+        translators: Arc::new(registry),
+        dictionaries: Arc::new(dictionaries),
+        vocab: Arc::new(vocab),
+        anki: Arc::new(AnkiConnect::from_env()),
+    };
+
+    let overhear = Overhear::start(config, services).context("パイプラインの起動")?;
 
     let schema = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(Arc::clone(&overhear))
