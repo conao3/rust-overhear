@@ -10,18 +10,14 @@
 //! - `main`   — 履歴・語彙・設定を操作するスタジオ
 
 mod autostart;
+mod server;
 
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-
-use anyhow::{Context, Result, anyhow};
-use overhear_core::child::die_with_parent;
-use serde::Deserialize;
+use anyhow::{Context, Result};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 /// 字幕バーの高さ。画面下部にこの高さで貼り付ける。
 const CAPTION_HEIGHT: f64 = 150.0;
@@ -29,67 +25,6 @@ const CAPTION_HEIGHT: f64 = 150.0;
 const CAPTION_WIDTH_RATIO: f64 = 0.72;
 /// 画面下端からの余白。
 const CAPTION_BOTTOM_MARGIN: f64 = 64.0;
-
-#[derive(Debug, Deserialize)]
-struct Announce {
-    graphql: String,
-    websocket: String,
-    token: Option<String>,
-}
-
-/// 終了時に子プロセスを道連れにする。
-struct ServerProcess(Child);
-
-impl Drop for ServerProcess {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// overhear-server の実体を探す。開発中は同じ target ディレクトリに並ぶ。
-fn server_binary() -> Result<PathBuf> {
-    let exe = std::env::current_exe().context("current_exe")?;
-    let sibling = exe
-        .parent()
-        .map(|dir| dir.join("overhear-server"))
-        .filter(|p| p.exists());
-    sibling.ok_or_else(|| anyhow!("overhear-server が見つからない (先に cargo build すること)"))
-}
-
-/// サーバを起動し、標準出力の 1 行目に出る接続情報を受け取る。
-fn start_server() -> Result<(Announce, ServerProcess)> {
-    let bin = server_binary()?;
-    let mut command = Command::new(&bin);
-    command.stdout(Stdio::piped()).stderr(Stdio::inherit());
-    // アプリが SIGKILL されても、april を抱えたサーバが残らないようにする。
-    let mut child = die_with_parent(&mut command)
-        .spawn()
-        .with_context(|| format!("{} の起動", bin.display()))?;
-
-    let stdout = child.stdout.take().context("サーバの stdout が取れない")?;
-    let reader = BufReader::new(stdout);
-
-    // サーバはログを stderr に出すので stdout の 1 行目が接続情報になるが、
-    // 何かが紛れ込んでも拾えるよう、JSON として読める行を先頭から探す。
-    for line in reader.lines().take(20) {
-        let line = line.context("サーバの接続情報を読めない")?;
-        if let Ok(announce) = serde_json::from_str::<Announce>(line.trim()) {
-            return Ok((announce, ServerProcess(child)));
-        }
-    }
-    Err(anyhow!("サーバが接続情報を出力しなかった"))
-}
-
-/// フロントは `window.__OVERHEAR__` から接続先とトークンを読む。
-fn init_script(announce: &Announce) -> String {
-    let payload = serde_json::json!({
-        "graphql": announce.graphql,
-        "websocket": announce.websocket,
-        "token": announce.token,
-    });
-    format!("window.__OVERHEAR__ = {payload};")
-}
 
 /// 常時最前面・枠なしの字幕バーを画面下部に貼る。
 fn build_caption_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> {
@@ -104,7 +39,8 @@ fn build_caption_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> 
         .initialization_script(script)
         .build()?;
 
-    // 画面下部の中央へ寄せる。モニタが取れない環境では既定位置のままにする。
+    // 画面下部の中央へ寄せ、前回動かした位置と大きさがあればそちらに戻す。
+    // モニタが取れない環境では既定位置のままにする。
     if let Ok(Some(monitor)) = window.primary_monitor() {
         let size = monitor.size().to_logical::<f64>(monitor.scale_factor());
         let width = size.width * CAPTION_WIDTH_RATIO;
@@ -114,7 +50,44 @@ fn build_caption_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> 
             size.height - CAPTION_HEIGHT - CAPTION_BOTTOM_MARGIN,
         ));
     }
+    if let Err(err) = window.restore_state(window_state_flags()) {
+        tracing::warn!(%err, "字幕バーの位置を戻せなかった");
+    }
     Ok(window)
+}
+
+/// 残すのは位置と大きさだけ。表示状態は起動のしかた (自動起動か) で決める。
+fn window_state_flags() -> StateFlags {
+    StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED
+}
+
+/// 動かした・大きさを変えたら、落ち着いたところでディスクへ書く。
+///
+/// プラグインが書くのは正常終了のときだけで、ログアウトやシグナルで
+/// 終わると動かした位置が残らない。
+fn save_window_state_on_change(window: &WebviewWindow) {
+    let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let app = window.app_handle().clone();
+    window.on_window_event(move |event| {
+        if !matches!(
+            event,
+            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+        ) {
+            return;
+        }
+        use std::sync::atomic::Ordering;
+        let mine = generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let generation = std::sync::Arc::clone(&generation);
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if generation.load(Ordering::Relaxed) == mine {
+                if let Err(err) = app.save_window_state(window_state_flags()) {
+                    tracing::warn!(%err, "ウィンドウの位置を保存できなかった");
+                }
+            }
+        });
+    });
 }
 
 fn build_studio_window(app: &AppHandle, script: &str, visible: bool) -> Result<WebviewWindow> {
@@ -219,6 +192,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                // 字幕バーは既定の位置へ置いてから戻すので、自動では戻さない。
+                .skip_initial_state("caption")
+                .build(),
+        )
+        .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_shortcuts([caption_shortcut, studio_shortcut])
                 .expect("グローバルショートカットの登録")
@@ -237,19 +217,38 @@ pub fn run() {
         )
         .setup(|app| {
             let from_autostart = std::env::args().any(|a| a == autostart::AUTOSTART_ARG);
-            let (announce, process) = start_server()?;
+            let (supervisor, announce) = server::Supervisor::start()?;
             tracing::info!(endpoint = %announce.graphql, "overhear-server に接続する");
             let handle = app.handle();
-            let script = init_script(&announce);
-            build_caption_window(handle, &script)?;
+            let script = announce.init_script();
+            let caption = build_caption_window(handle, &script)?;
             // ログイン時はスタジオを出さない。字幕バーとトレイだけで待つ。
-            build_studio_window(handle, &script, !from_autostart)?;
+            let studio = build_studio_window(handle, &script, !from_autostart)?;
+            save_window_state_on_change(&caption);
+            save_window_state_on_change(&studio);
             build_tray(handle)?;
 
+            // サーバが落ちたら起動し直し、各ウィンドウを新しい接続先で読み込み直す。
+            let reload_handle = handle.clone();
+            supervisor.watch(move |announce| {
+                let script = announce.reconnect_script();
+                for label in ["caption", "main"] {
+                    if let Some(window) = reload_handle.get_webview_window(label) {
+                        if let Err(err) = window.eval(&script) {
+                            tracing::warn!(%err, label, "ウィンドウを繋ぎ直せなかった");
+                        }
+                    }
+                }
+            });
             // サーバの寿命をアプリに合わせる。
-            app.manage(process);
+            app.manage(supervisor);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("Tauri アプリの起動に失敗した");
+        .build(tauri::generate_context!())
+        .expect("Tauri アプリの起動に失敗した")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<std::sync::Arc<server::Supervisor>>().stop();
+            }
+        });
 }

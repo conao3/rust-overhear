@@ -55,6 +55,10 @@ PipeWire monitor
 | `Ctrl+Alt+O` | 字幕バーの表示切替 |
 | `Ctrl+Alt+S` | スタジオの表示切替 |
 
+字幕バーとスタジオの位置と大きさは `$XDG_CONFIG_HOME/com.conao3.overhear/.window-state.json` に残り、次の起動で戻る (`tauri-plugin-window-state`)。プラグインが書くのは正常終了のときだけなので、動かしたり大きさを変えたりしたら 0.5 秒後にも書く。字幕バーは画面下の中央へ置いてから、保存した位置があればそちらへ戻す。
+
+`overhear-server` が落ちたら、Tauri が起動し直す。ポートとトークンは起動ごとに変わるので、新しい接続情報を各ウィンドウの `sessionStorage` に入れてページを読み込み直す (初期化スクリプトは `sessionStorage` の値を優先して `window.__OVERHEAR__` にする)。60 秒に 5 回落ちたら起動し直すのをやめる。
+
 トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動では `--autostart` が付き、スタジオを出さずに字幕バーとトレイだけで始まる。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
 
 Tauri が持つのはウィンドウとプロセス管理だけで、ドメインロジックは GraphQL サーバ側にある。Tauri の IPC ではなくローカル HTTP / WebSocket に口を開けているのは、字幕が subscription を本質とするデータであり、Apollo の `GraphQLWsLink` がそのまま使えるため。
