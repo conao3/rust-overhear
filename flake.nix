@@ -30,6 +30,14 @@
                 url = "https://april.sapples.net/april-english-dev-01110_en.april";
                 hash = "sha256-d+uV0PpPdwijfoaMImUwHubELcsl5jymPuo9nLrbwfM=";
               };
+
+              # two-pass ASR の後段。april の即時出力を、句読点つきの
+              # 確定文へ差し替えるために使う。
+              whisper-model = final.fetchurl {
+                name = "ggml-base.en.bin";
+                url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+                hash = "sha256-oDd5yG3zMjB19eeWyyzlAp8A7Ihp7uP9+4l6/jbG0AI=";
+              };
             in
             {
               inherit
@@ -37,6 +45,7 @@
                 pnpm
                 rustToolchain
                 april-model
+                whisper-model
                 ;
             };
 
@@ -62,6 +71,7 @@
               pipewire # pw-record (音声キャプチャ)
               sqlite
               wordnet
+              whisper-cpp # whisper-server (two-pass ASR の後段)
             ];
 
             buildInputs = with pkgs; [
@@ -80,6 +90,7 @@
               # WordNet 3.0 の dict ファイル (英英辞書)。nixpkgs に入っているため
               # 追加のダウンロードは要らない。
               WORDNET_DICT_DIR = "${pkgs.wordnet}/dict";
+              WHISPER_MODEL_PATH = "${pkgs.whisper-model}";
               APRIL_MODEL_PATH = "${pkgs.april-model}";
               LD_LIBRARY_PATH = aprilLibDir;
               GIO_MODULE_PATH = "${pkgs.glib-networking}/lib/gio/modules";

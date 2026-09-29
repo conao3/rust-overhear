@@ -9,6 +9,7 @@ use anyhow::Result;
 #[cfg(feature = "april")]
 pub mod april;
 pub mod mock;
+pub mod whisper;
 
 #[derive(Debug, Clone)]
 pub struct AsrToken {

@@ -37,6 +37,7 @@ fn capture_state(overhear: &Overhear) -> CaptureState {
         },
         target_lang: overhear.config.target_lang.clone(),
         muted: overhear.is_muted(),
+        refiner: overhear.whisper.as_ref().map(|_| "whisper.cpp".to_string()),
     }
 }
 

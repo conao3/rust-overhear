@@ -21,6 +21,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use clap::Parser;
 use overhear_core::anki::AnkiConnect;
+use overhear_core::asr::whisper::WhisperRefiner;
 use overhear_core::dict::DictionaryRegistry;
 use overhear_core::pipeline::Services;
 use overhear_core::ring::encode_wav;
@@ -52,6 +53,14 @@ struct Args {
     /// 擬似 ASR で動かす。april のモデルが無くても起動できる。
     #[arg(long, default_value_t = false)]
     mock: bool,
+
+    /// two-pass ASR の後段 (whisper.cpp) を使わない。
+    #[arg(long, default_value_t = false)]
+    no_whisper: bool,
+
+    /// whisper-server に渡すスレッド数。
+    #[arg(long, default_value_t = 4)]
+    whisper_threads: usize,
 
     /// リングバッファの長さ (秒)。
     #[arg(long, default_value_t = 600)]
@@ -205,8 +214,34 @@ async fn main() -> Result<()> {
     let vocab = VocabStore::open_default().context("語彙ストアを開けない")?;
     tracing::info!(saved = vocab.count().unwrap_or(0), "語彙ストアを読み込んだ");
 
+    // 後段が用意できなければ april の出力をそのまま確定として使う。
+    let whisper = if args.no_whisper {
+        None
+    } else {
+        match WhisperRefiner::spawn_from_env(args.whisper_threads) {
+            Ok(refiner) => {
+                let refiner = Arc::new(refiner);
+                match refiner.wait_ready(std::time::Duration::from_secs(60)).await {
+                    Ok(()) => {
+                        tracing::info!("two-pass ASR の後段に whisper.cpp を使う");
+                        Some(refiner)
+                    }
+                    Err(err) => {
+                        tracing::warn!(%err, "whisper-server が応答しないので後段なしで続ける");
+                        None
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!(%err, "whisper を使えないので後段なしで続ける");
+                None
+            }
+        }
+    };
+
     let services = Services {
         translators: Arc::new(registry),
+        whisper,
         dictionaries: Arc::new(dictionaries),
         vocab: Arc::new(vocab),
         anki: Arc::new(AnkiConnect::from_env()),

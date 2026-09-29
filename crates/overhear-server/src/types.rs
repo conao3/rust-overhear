@@ -69,6 +69,8 @@ pub struct CaptureState {
     pub target_lang: String,
     /// 聞き直しの再生中は入力を無音として扱っている。
     pub muted: bool,
+    /// two-pass ASR の後段が有効か。
+    pub refiner: Option<String>,
 }
 
 impl From<core::Token> for Token {

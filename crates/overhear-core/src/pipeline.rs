@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::anki::{AnkiConnect, AnkiNote, DEFAULT_DECK, DEFAULT_MODEL};
+use crate::asr::whisper::WhisperRefiner;
 use crate::asr::{AsrEvent, AsrToken, Recognizer};
 use crate::audio::{self, CaptureConfig, CaptureHandle};
 use crate::dict::{DictEntry, DictionaryRegistry};
@@ -59,6 +60,8 @@ impl Default for RuntimeConfig {
 /// まとめて渡して `Overhear` 本体の引数が増えないようにしてある。
 pub struct Services {
     pub translators: Arc<TranslatorRegistry>,
+    /// two-pass ASR の後段。無ければ april の出力をそのまま確定とする。
+    pub whisper: Option<Arc<WhisperRefiner>>,
     pub dictionaries: Arc<DictionaryRegistry>,
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
@@ -82,6 +85,7 @@ pub struct Overhear {
     pub segments: Arc<RwLock<VecDeque<Segment>>>,
     pub updates: broadcast::Sender<Segment>,
     pub translators: Arc<TranslatorRegistry>,
+    pub whisper: Option<Arc<WhisperRefiner>>,
     pub dictionaries: Arc<DictionaryRegistry>,
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
@@ -165,6 +169,7 @@ impl Overhear {
             segments: Arc::clone(&segments),
             updates: updates.clone(),
             translators: services.translators,
+            whisper: services.whisper,
             dictionaries: services.dictionaries,
             vocab: services.vocab,
             anki: services.anki,
@@ -197,8 +202,12 @@ impl Overhear {
 
         if is_final && !segment.source_text.is_empty() {
             let this = Arc::clone(self);
+            let id = segment.id;
             tokio::spawn(async move {
-                this.translate_segment(segment.id, None).await;
+                // 先に確定文へ差し替えてから翻訳する。翻訳の入力が
+                // 句読点つきの読める文になる。
+                this.refine_segment(id).await;
+                this.translate_segment(id, None).await;
             });
         }
     }
@@ -257,6 +266,41 @@ impl Overhear {
         let segment = self.segment(id)?;
         let ring = self.ring.lock().ok()?;
         ring.slice_ms(segment.start_ms, segment.end_ms)
+    }
+
+    /// 確定した segment を whisper.cpp の出力で差し替える (two-pass の後段)。
+    ///
+    /// april は低遅延だが全部大文字で句読点が無い。文が閉じた後に
+    /// リングバッファの該当区間を whisper へ投げ、同じ id の更新として
+    /// 配信し直す。
+    pub async fn refine_segment(self: &Arc<Self>, id: SegmentId) -> Option<Segment> {
+        let whisper = self.whisper.as_ref()?;
+        let segment = self.segment(id)?;
+        if segment.asr_engine.contains("whisper") {
+            return None; // 二重に掛けない
+        }
+
+        let audio = {
+            let ring = self.ring.lock().ok()?;
+            ring.slice_ms(WhisperRefiner::lead_in(segment.start_ms), segment.end_ms)?
+        };
+        let text = match whisper.refine(&audio, self.config.sample_rate).await {
+            Ok(text) if !text.is_empty() => text,
+            Ok(_) => return None,
+            Err(err) => {
+                // 後段が落ちても april の出力は残る。
+                tracing::warn!(%err, "whisper での差し替えに失敗した");
+                return None;
+            }
+        };
+
+        let mut updated = self.segment(id)?;
+        updated.tokens = words_from_text(&text, updated.start_ms, updated.end_ms);
+        updated.source_text = text;
+        updated.asr_engine = format!("{}+whisper", updated.asr_engine);
+        self.upsert(updated.clone());
+        let _ = self.updates.send(updated.clone());
+        Some(updated)
     }
 
     /// 単語を辞書で引く。
@@ -381,6 +425,30 @@ impl Overhear {
         let _ = self.updates.send(updated.clone());
         Some(updated)
     }
+}
+
+/// whisper の確定文を語トークンに割り付ける。
+///
+/// whisper-server は語ごとの時刻を返さないため、segment の区間に均等割りする。
+/// 表示と辞書引きにはこれで足り、正確な語頭時刻が要るのは将来の機能。
+fn words_from_text(text: &str, start_ms: u64, end_ms: u64) -> Vec<Token> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let span = end_ms.saturating_sub(start_ms);
+    let step = span / words.len().max(1) as u64;
+    words
+        .iter()
+        .enumerate()
+        .map(|(index, word)| Token {
+            index,
+            surface: (*word).to_string(),
+            start_ms: start_ms + step * index as u64,
+            word_boundary: true,
+            sentence_end: word.ends_with(['.', '!', '?']),
+        })
+        .collect()
 }
 
 /// 辞書に載らない語のフォールバック。句読点と所有格を落として小文字にする。
@@ -542,5 +610,31 @@ mod tests {
         assert_eq!(words[0].start_ms, 1680);
         assert_eq!(words[1].start_ms, 2480);
         assert_eq!(words[1].index, 1);
+    }
+}
+
+#[cfg(test)]
+mod refine_tests {
+    use super::*;
+
+    #[test]
+    fn distributes_word_timings_over_the_segment() {
+        let tokens = words_from_text("I have to go now.", 1000, 3000);
+        assert_eq!(tokens.len(), 5);
+        assert_eq!(tokens[0].surface, "I");
+        assert_eq!(tokens[0].start_ms, 1000);
+        // 5 語を 2000ms に均等割り → 400ms 刻み
+        assert_eq!(tokens[1].start_ms, 1400);
+        assert_eq!(tokens[4].start_ms, 2600);
+        // 文末の語だけ sentence_end が立つ
+        assert!(tokens[4].sentence_end);
+        assert!(!tokens[0].sentence_end);
+        // 採番は 0 から連番
+        assert_eq!(tokens[4].index, 4);
+    }
+
+    #[test]
+    fn empty_text_yields_no_tokens() {
+        assert!(words_from_text("   ", 0, 1000).is_empty());
     }
 }
