@@ -91,6 +91,7 @@
               libsoup_3
               glib-networking
               librsvg
+              libayatana-appindicator # トレイアイコン (dlopen される)
             ];
 
             env = {
@@ -101,7 +102,9 @@
               WHISPER_MODEL_PATH = "${pkgs.whisper-model}";
               EJDICT_PATH = "${pkgs.ejdict}/ejdict-hand-utf8.txt";
               APRIL_MODEL_PATH = "${pkgs.april-model}";
-              LD_LIBRARY_PATH = aprilLibDir;
+              # libaprilasr.so と libayatana-appindicator は dlopen されるので
+              # 実行時の検索パスに載せる。
+              LD_LIBRARY_PATH = "${aprilLibDir}:${pkgs.libayatana-appindicator}/lib";
               GIO_MODULE_PATH = "${pkgs.glib-networking}/lib/gio/modules";
             };
           };
