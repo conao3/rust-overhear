@@ -140,6 +140,7 @@
                   --set WHISPER_MODEL_PATH "${pkgs.whisper-model}" \
                   --set WORDNET_DICT_DIR "${pkgs.wordnet}/dict" \
                   --set EJDICT_PATH "${pkgs.ejdict}/ejdict-hand-utf8.txt" \
+                  --set OVERHEAR_AUTOSTART_EXEC overhear \
                   --prefix LD_LIBRARY_PATH : "${pkgs.libayatana-appindicator}/lib" \
                   --prefix PATH : "${
                     pkgs.lib.makeBinPath [

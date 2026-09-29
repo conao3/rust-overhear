@@ -55,6 +55,8 @@ PipeWire monitor
 | `Ctrl+Alt+O` | 字幕バーの表示切替 |
 | `Ctrl+Alt+S` | スタジオの表示切替 |
 
+トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動では `--autostart` が付き、スタジオを出さずに字幕バーとトレイだけで始まる。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
+
 Tauri が持つのはウィンドウとプロセス管理だけで、ドメインロジックは GraphQL サーバ側にある。Tauri の IPC ではなくローカル HTTP / WebSocket に口を開けているのは、字幕が subscription を本質とするデータであり、Apollo の `GraphQLWsLink` がそのまま使えるため。
 
 ポートは `127.0.0.1` の ephemeral、起動ごとにランダムな 32 文字のトークンを生成し、HTTP は `Authorization: Bearer`、WebSocket は `connectionParams` で要求する。Tauri は接続情報を `window.__OVERHEAR__` でフロントへ渡す。
@@ -154,6 +156,8 @@ CPU 推論 (Core Ultra 5 225U、`num_thread` 8) で字幕 1 行の英→日に�
 - [x] Anki 書き出し (AnkiConnect)。音声つきカードを作る
 - [x] 字幕バーとスタジオの 2 ウィンドウ、トレイ、グローバルホットキー
 - [x] nix パッケージ化 (`nix run`、desktop entry つき)
+- [x] ログイン時の自動起動 (XDG autostart)
+- [x] 翻訳エンジンと音源の選択の永続化 (`settings.json`)
 - [x] 音源の選択 (再生側の monitor / 録音側)。切り替えは `pw-record` の子プロセスだけを差し替える
 - [ ] `pipewire-rs` 直結 (現状は `pw-record` の subprocess)
 - [ ] API キーの Secret Service (keyring) 保存 (現状は環境変数)

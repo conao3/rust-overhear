@@ -9,6 +9,8 @@
 //! - `caption` — 常時最前面・枠なしの字幕バー。動画の上に重ねて使う
 //! - `main`   — 履歴・語彙・設定を操作するスタジオ
 
+mod autostart;
+
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -16,7 +18,7 @@ use std::process::{Child, Command, Stdio};
 use anyhow::{Context, Result, anyhow};
 use overhear_core::child::die_with_parent;
 use serde::Deserialize;
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
@@ -115,11 +117,12 @@ fn build_caption_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> 
     Ok(window)
 }
 
-fn build_studio_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> {
+fn build_studio_window(app: &AppHandle, script: &str, visible: bool) -> Result<WebviewWindow> {
     Ok(
         WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
             .title("overhear")
             .inner_size(960.0, 720.0)
+            .visible(visible)
             .initialization_script(script)
             .build()?,
     )
@@ -150,8 +153,20 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         None::<&str>,
     )?;
     let open_studio = MenuItem::with_id(app, "open_studio", "スタジオを開く", true, None::<&str>)?;
+    let autostart_dir = autostart::autostart_dir()?;
+    let launch_at_login = CheckMenuItem::with_id(
+        app,
+        "launch_at_login",
+        "ログイン時に起動",
+        true,
+        autostart::is_enabled(&autostart_dir),
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&toggle_caption, &open_studio, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&toggle_caption, &open_studio, &launch_at_login, &quit],
+    )?;
 
     TrayIconBuilder::with_id("overhear")
         .icon(
@@ -161,13 +176,26 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         )
         .tooltip("overhear")
         .menu(&menu)
-        .on_menu_event(|app, event| match event.id().as_ref() {
+        .on_menu_event(move |app, event| match event.id().as_ref() {
             "toggle_caption" => toggle_window(app, "caption"),
             "open_studio" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+            }
+            "launch_at_login" => {
+                // クリックでチェックは既に反転している。ファイルの実態に合わせ直す。
+                let result = if autostart::is_enabled(&autostart_dir) {
+                    autostart::disable(&autostart_dir)
+                } else {
+                    autostart::exec_command()
+                        .and_then(|exec| autostart::enable(&autostart_dir, &exec))
+                };
+                if let Err(err) = result {
+                    tracing::warn!(%err, "自動起動を切り替えられなかった");
+                }
+                let _ = launch_at_login.set_checked(autostart::is_enabled(&autostart_dir));
             }
             "quit" => app.exit(0),
             _ => {}
@@ -208,12 +236,14 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let from_autostart = std::env::args().any(|a| a == autostart::AUTOSTART_ARG);
             let (announce, process) = start_server()?;
             tracing::info!(endpoint = %announce.graphql, "overhear-server に接続する");
             let handle = app.handle();
             let script = init_script(&announce);
             build_caption_window(handle, &script)?;
-            build_studio_window(handle, &script)?;
+            // ログイン時はスタジオを出さない。字幕バーとトレイだけで待つ。
+            build_studio_window(handle, &script, !from_autostart)?;
             build_tray(handle)?;
 
             // サーバの寿命をアプリに合わせる。
