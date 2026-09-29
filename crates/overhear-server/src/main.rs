@@ -138,8 +138,10 @@ async fn audio_handler(
     headers: HeaderMap,
     Path(file): Path<String>,
 ) -> Response {
+    // 認証は /graphql と同じくヘッダのみ。<audio src> は直接ここを叩けないため、
+    // フロントは fetch でトークンを付けて取得し blob にして再生する。
+    // URL にトークンを載せない方針。
     if !header_token_ok(&state, &headers) {
-        // <audio src> はヘッダを付けられないため、クエリ経由も許す。
         return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
     }
     let Some(id) = file

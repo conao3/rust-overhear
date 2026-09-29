@@ -42,4 +42,5 @@ export type CaptureState = {
   capturedMs: number;
   asrEngine: string;
   targetLang: string;
+  muted: boolean;
 };

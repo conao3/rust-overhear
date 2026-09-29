@@ -52,6 +52,7 @@ export const CAPTURE_STATE = gql`
       capturedMs
       asrEngine
       targetLang
+      muted
     }
   }
 `;
@@ -74,6 +75,15 @@ export const RETRANSLATE = gql`
   mutation Retranslate($segmentId: ID!, $engineId: ID) {
     retranslate(segmentId: $segmentId, engineId: $engineId) {
       ...SegmentFields
+    }
+  }
+`;
+
+/** 聞き直しの再生音を拾い直さないよう、再生の間だけ入力を閉じる。 */
+export const MUTE_CAPTURE = gql`
+  mutation MuteCapture($ms: Int!) {
+    muteCapture(ms: $ms) {
+      muted
     }
   }
 `;

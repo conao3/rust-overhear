@@ -64,6 +64,8 @@ pub struct CaptureState {
     pub captured_ms: i32,
     pub asr_engine: String,
     pub target_lang: String,
+    /// 聞き直しの再生中は入力を無音として扱っている。
+    pub muted: bool,
 }
 
 impl From<core::Token> for Token {

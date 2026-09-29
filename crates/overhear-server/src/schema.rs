@@ -34,6 +34,7 @@ fn capture_state(overhear: &Overhear) -> CaptureState {
             overhear_core::EngineChoice::Mock => "mock".into(),
         },
         target_lang: overhear.config.target_lang.clone(),
+        muted: overhear.is_muted(),
     }
 }
 
@@ -88,6 +89,16 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
+    /// 指定時間だけ入力を無音として扱う。
+    ///
+    /// 聞き直しの再生音は既定シンクの monitor に戻ってくるため、
+    /// フロントは再生の前後をこれで挟む。
+    async fn mute_capture(&self, ctx: &Context<'_>, ms: i32) -> CaptureState {
+        let overhear = engine(ctx);
+        overhear.mute_for(ms.clamp(0, 60_000) as u64);
+        capture_state(&overhear)
+    }
+
     /// 任意のエンジンで翻訳を引き直す。結果は translations に追加される。
     async fn retranslate(
         &self,

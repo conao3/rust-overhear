@@ -27,11 +27,30 @@ export const endpoint: OverhearEndpoint = window.__OVERHEAR__ ?? fallback;
 
 /** GraphQL には音声バイナリを載せないため、実体はこちらから取る。 */
 export function audioUrl(path: string): string {
-  const url = new URL(path, endpoint.graphql);
-  if (endpoint.token) {
-    url.searchParams.set("token", endpoint.token);
+  return new URL(path, endpoint.graphql).toString();
+}
+
+export class AudioUnavailableError extends Error {}
+
+/**
+ * segment の音声を取得して blob URL にする。
+ *
+ * `<audio src>` は Authorization ヘッダを付けられないので、fetch で取ってから
+ * 再生する。トークンを URL のクエリに載せない方針。
+ */
+export async function fetchAudioObjectUrl(path: string): Promise<string> {
+  const res = await fetch(audioUrl(path), {
+    headers: endpoint.token
+      ? { Authorization: `Bearer ${endpoint.token}` }
+      : {},
+  });
+  if (res.status === 404) {
+    throw new AudioUnavailableError("この音声はリングバッファから溢れている");
   }
-  return url.toString();
+  if (!res.ok) {
+    throw new Error(`音声を取得できない (HTTP ${res.status})`);
+  }
+  return URL.createObjectURL(await res.blob());
 }
 
 export function formatMs(ms: number): string {

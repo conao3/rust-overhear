@@ -5,6 +5,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::sync::{broadcast, mpsc};
@@ -55,6 +56,9 @@ pub struct Overhear {
     pub segments: Arc<RwLock<VecDeque<Segment>>>,
     pub updates: broadcast::Sender<Segment>,
     pub translators: Arc<TranslatorRegistry>,
+    /// この時刻までは入力を無音として扱う。聞き直しの再生音を
+    /// 自分の monitor から拾い直さないための窓。
+    mute_until: Arc<Mutex<Option<Instant>>>,
     _capture: CaptureHandle,
 }
 
@@ -89,16 +93,34 @@ impl Overhear {
         let segments = Arc::new(RwLock::new(VecDeque::<Segment>::new()));
         let (updates, _) = broadcast::channel::<Segment>(256);
 
+        let mute_until: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+
         // 音声を ring に溜めつつ ASR へ供給する。ASR 側はブロッキング API
         // なので専用スレッドに置く。
         {
             let ring = Arc::clone(&ring);
+            let mute_until = Arc::clone(&mute_until);
             tokio::task::spawn_blocking(move || {
                 while let Some(chunk) = audio_rx.blocking_recv() {
+                    let muted = mute_until
+                        .lock()
+                        .ok()
+                        .and_then(|g| *g)
+                        .is_some_and(|until| Instant::now() < until);
+
+                    // ミュート中は破棄せず無音に差し替える。破棄すると ASR に
+                    // 供給した累積時間が止まり、リングバッファの絶対時間軸と
+                    // ずれてしまうため。
+                    let data = if muted {
+                        vec![0i16; chunk.len()]
+                    } else {
+                        chunk
+                    };
+
                     if let Ok(mut ring) = ring.lock() {
-                        ring.push(&chunk);
+                        ring.push(&data);
                     }
-                    if let Err(err) = recognizer.feed(&chunk) {
+                    if let Err(err) = recognizer.feed(&data) {
                         tracing::warn!(?err, "ASR への供給に失敗した");
                         break;
                     }
@@ -114,6 +136,7 @@ impl Overhear {
             segments: Arc::clone(&segments),
             updates: updates.clone(),
             translators,
+            mute_until,
             _capture: capture,
         });
 
@@ -160,6 +183,25 @@ impl Overhear {
                 segments.pop_front();
             }
         }
+    }
+
+    /// 指定時間だけ入力を無音として扱う。
+    ///
+    /// 既定シンクへ鳴らした音は自分の monitor に戻ってくるので、聞き直しの
+    /// 間これを閉じておかないと、再生した音声がもう一度書き起こされて
+    /// 履歴が汚れる。
+    pub fn mute_for(&self, ms: u64) {
+        if let Ok(mut guard) = self.mute_until.lock() {
+            *guard = Some(Instant::now() + Duration::from_millis(ms));
+        }
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.mute_until
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .is_some_and(|until| Instant::now() < until)
     }
 
     pub fn segment(&self, id: SegmentId) -> Option<Segment> {

@@ -4,9 +4,14 @@ import { useMutation, useQuery, useSubscription } from "@apollo/client/react";
 import { CaptionBar } from "./components/CaptionBar";
 import { EnginePicker } from "./components/EnginePicker";
 import { SegmentHistory } from "./components/SegmentHistory";
-import { audioUrl, formatMs } from "./lib/config";
+import {
+  AudioUnavailableError,
+  fetchAudioObjectUrl,
+  formatMs,
+} from "./lib/config";
 import {
   CAPTURE_STATE,
+  MUTE_CAPTURE,
   RETRANSLATE,
   SEGMENTS,
   SEGMENT_UPDATES,
@@ -18,7 +23,9 @@ const HISTORY_LIMIT = 50;
 
 export function App() {
   const [engineId, setEngineId] = useState<string | null>(null);
+  const [playError, setPlayError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
 
   const { data: segmentsData } = useQuery<{ segments: Segment[] }>(SEGMENTS, {
     variables: { limit: HISTORY_LIMIT },
@@ -33,6 +40,7 @@ export function App() {
     },
   );
   const [retranslate] = useMutation(RETRANSLATE);
+  const [muteCapture] = useMutation(MUTE_CAPTURE);
 
   // interim → final の差し替えは Segment の正規化キャッシュが吸収する。
   // ここで面倒を見るのは「新しい id を一覧へ足す」ことだけ。
@@ -61,13 +69,32 @@ export function App() {
     }
   }, [engineId, engines]);
 
-  const play = useCallback((url: string) => {
-    if (!audioRef.current) return;
-    audioRef.current.src = audioUrl(url);
-    void audioRef.current.play().catch(() => {
-      // リングバッファから溢れていれば 404。UI は黙って何もしない。
-    });
-  }, []);
+  const play = useCallback(
+    async (url: string, durationMs: number) => {
+      if (!audioRef.current) return;
+      setPlayError(null);
+      // 再生音は既定シンクの monitor に戻ってくる。再生している間は
+      // 入力を閉じておかないと、聞き直すたびに履歴が汚れる。
+      await muteCapture({ variables: { ms: durationMs + 800 } }).catch(
+        () => {},
+      );
+      try {
+        // 前回の blob URL を解放してから差し替える。
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+        const objectUrl = await fetchAudioObjectUrl(url);
+        objectUrlRef.current = objectUrl;
+        audioRef.current.src = objectUrl;
+        await audioRef.current.play();
+      } catch (err) {
+        setPlayError(
+          err instanceof AudioUnavailableError
+            ? err.message
+            : `再生できなかった (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+    },
+    [muteCapture],
+  );
 
   const captureState = stateData?.captureState;
 
@@ -93,13 +120,23 @@ export function App() {
 
       <CaptionBar
         segment={latest}
-        onPlay={() => latest && play(latest.audioUrl)}
+        onPlay={() =>
+          latest && void play(latest.audioUrl, latest.endMs - latest.startMs)
+        }
       />
+
+      {playError && (
+        <p className="rounded bg-amber-500/15 px-3 py-2 text-sm text-amber-200">
+          {playError}
+        </p>
+      )}
 
       <section className="min-h-0 flex-1 overflow-y-auto">
         <SegmentHistory
           segments={[...segments].reverse()}
-          onPlay={(segment) => play(segment.audioUrl)}
+          onPlay={(segment) =>
+            void play(segment.audioUrl, segment.endMs - segment.startMs)
+          }
           onRetranslate={(segment) => {
             void retranslate({
               variables: { segmentId: segment.id, engineId },

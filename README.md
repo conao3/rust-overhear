@@ -30,7 +30,7 @@ PipeWire monitor
    axum + async-graphql (127.0.0.1, ephemeral port)
       ├ POST /graphql  … Query / Mutation
       ├ WS   /graphql  … Subscription (graphql-ws)
-      └ GET  /audio/{segmentId}.wav … 音声の実体
+      └ GET  /audio/{segmentId}.wav … 音声の実体 (Range 未対応)
                                         ↑
    Tauri v2 WebView
       React + Tailwind + react-aria-components + Apollo Client
@@ -84,10 +84,18 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 - [x] GraphQL の Query / Mutation / Subscription、トークン認証、音声の WAV 配信
 - [x] Tauri + React + Apollo のフロント (キャプションバー、履歴、聞き直し、エンジン選択)
 - [x] 翻訳ストラテジー (ollama / deepl / google / none) とフォールバック
+- [x] 聞き直しの再生音を拾い直さないミュート (`muteCapture`)
 - [ ] whisper.cpp による確定文への差し替え (two-pass の後段)
 - [ ] 辞書ポップアップ (WordNet / ejdict)、語彙ストア、Anki 書き出し
 - [ ] `pipewire-rs` 直結、デバイス選択、グローバルホットキー、nix パッケージ化
 - [ ] API キーの Secret Service (keyring) 保存 (現状は環境変数)
+
+## 既知の制約
+
+- **聞き直しの再生音は既定シンクの monitor に戻ってくる。** フロントは再生の前に `muteCapture` を呼び、その間の入力を無音に差し替えている (破棄ではなく無音なのは ASR とリングバッファの時間軸を止めないため)。裏返しとして、**再生中は実際の音声が書き起こされない**
+- `/audio/{id}.wav` は Range 未対応。数秒のクリップ前提で全体を返す
+- april-asr は英語モデルのみ。話者分離は無い
+- API キーは環境変数から読む (keyring 未対応)
 
 ## ライセンス
 
