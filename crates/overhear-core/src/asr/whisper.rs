@@ -14,6 +14,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
+use crate::child::die_with_parent;
 use crate::ring::encode_wav;
 
 /// 発話の直前を少し含めて切り出す。先頭が欠けた音声は認識が落ちる。
@@ -58,7 +59,8 @@ impl WhisperRefiner {
             return Err(anyhow!("whisper のモデルが見つからない: {model_path}"));
         }
         let port = pick_port()?;
-        let child = Command::new("whisper-server")
+        let mut command = Command::new("whisper-server");
+        command
             .arg("-m")
             .arg(model_path)
             .arg("--host")
@@ -68,7 +70,9 @@ impl WhisperRefiner {
             .arg("-t")
             .arg(threads.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        // 親が落ちても whisper-server が残らないようにする。
+        let child = die_with_parent(&mut command)
             .spawn()
             .context("whisper-server の起動に失敗した (PATH にあるか)")?;
 

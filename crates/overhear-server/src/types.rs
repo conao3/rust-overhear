@@ -1,6 +1,7 @@
 //! GraphQL のスキーマ型。core のドメイン型を射影する。
 
 use async_graphql::{Enum, ID, SimpleObject};
+use overhear_core::devices as core_devices;
 use overhear_core::dict as core_dict;
 use overhear_core::model as core;
 use overhear_core::pipeline as core_pipeline;
@@ -71,6 +72,8 @@ pub struct CaptureState {
     pub muted: bool,
     /// two-pass ASR の後段が有効か。
     pub refiner: Option<String>,
+    /// 拾っているノード。None なら既定シンク。
+    pub capture_target: Option<String>,
 }
 
 impl From<core::Token> for Token {
@@ -221,6 +224,36 @@ impl From<core_pipeline::AnkiExportResult> for AnkiExportResult {
                     reason: f.reason,
                 })
                 .collect(),
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+#[graphql(remote = "core_devices::DeviceKind")]
+pub enum DeviceKind {
+    /// 再生側。monitor を掴めばシステム音声になる。
+    Sink,
+    /// 録音側。マイクなど。
+    Source,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct AudioDevice {
+    pub id: ID,
+    pub name: String,
+    pub description: String,
+    pub kind: DeviceKind,
+    pub is_default: bool,
+}
+
+impl From<core_devices::AudioDevice> for AudioDevice {
+    fn from(d: core_devices::AudioDevice) -> Self {
+        Self {
+            id: ID(d.id),
+            name: d.name,
+            description: d.description,
+            kind: d.kind.into(),
+            is_default: d.is_default,
         }
     }
 }

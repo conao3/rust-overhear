@@ -59,8 +59,13 @@ struct Args {
     no_whisper: bool,
 
     /// whisper-server に渡すスレッド数。
-    #[arg(long, default_value_t = 4)]
+    /// 後追いの処理なので、既定は控えめにしてある。
+    #[arg(long, default_value_t = 2)]
     whisper_threads: usize,
+
+    /// 無音とみなす振幅のしきい値。0 で無音ゲートを切る。
+    #[arg(long, default_value_t = overhear_core::gate::DEFAULT_THRESHOLD)]
+    silence_threshold: u16,
 
     /// リングバッファの長さ (秒)。
     #[arg(long, default_value_t = 600)]
@@ -197,6 +202,7 @@ async fn main() -> Result<()> {
     registry.set_default(&args.translator);
 
     let config = RuntimeConfig {
+        silence_threshold: args.silence_threshold,
         ring_seconds: args.ring_seconds,
         target_lang: args.target_lang.clone(),
         engine: if args.mock {

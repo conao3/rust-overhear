@@ -8,6 +8,8 @@ use std::io::Read;
 use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
+
+use crate::child::die_with_parent;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
@@ -68,9 +70,9 @@ pub fn spawn(cfg: &CaptureConfig, tx: mpsc::UnboundedSender<Vec<i16>>) -> Result
     }
     cmd.arg("-");
 
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    // 親が落ちても pw-record が残らないようにする。
+    let mut child = die_with_parent(&mut cmd)
         .spawn()
         .context("pw-record の起動に失敗した (PipeWire は動いているか)")?;
 

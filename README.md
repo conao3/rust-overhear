@@ -75,6 +75,15 @@ whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入ってお�
 
 語彙と音声クリップは `$XDG_DATA_HOME/overhear` (既定 `~/.local/share/overhear`) に置く。`OVERHEAR_DATA_DIR` で変えられる。
 
+## 入れる
+
+```sh
+nix run github:conao3/rust-overhear        # そのまま起動
+nix profile install github:conao3/rust-overhear
+```
+
+`packages.default` はフロント (pnpm) と Rust をまとめてビルドし、april-asr のモデル・whisper のモデル・WordNet・英和辞書のパスと、子プロセスとして使う `pw-record` / `whisper-server` を実行ファイルに焼き込む。devShell の外でもそのまま動く。desktop entry とアイコンも入るのでメニューから起動できる。
+
 ## 使い方
 
 ```sh
@@ -118,7 +127,9 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 - [x] 語彙ストア (SQLite)。文・訳・語義・音声を保存時に焼き付ける
 - [x] Anki 書き出し (AnkiConnect)。音声つきカードを作る
 - [x] 字幕バーとスタジオの 2 ウィンドウ、トレイ、グローバルホットキー
-- [ ] `pipewire-rs` 直結、デバイス選択、nix パッケージ化
+- [x] nix パッケージ化 (`nix run`、desktop entry つき)
+- [x] 音源の選択 (再生側の monitor / 録音側)。切り替えは `pw-record` の子プロセスだけを差し替える
+- [ ] `pipewire-rs` 直結 (現状は `pw-record` の subprocess)
 - [ ] API キーの Secret Service (keyring) 保存 (現状は環境変数)
 
 ## Anki への書き出し
@@ -129,12 +140,29 @@ Anki を起動し AnkiConnect アドオンを入れておく (`OVERHEAR_ANKI_END
 - Back — 語義 + 保存時の文 + 訳、そこに音声クリップを添付
 - タグ — `overhear`
 
+## 負荷
+
+april-asr は供給された音声に対して常に推論を走らせるため、素のままだと**誰も喋っていなくても 1 コアの 6 割前後**を使い続ける (release/debug でほぼ同じ。C ライブラリ側の固定コスト)。常駐アプリとしては重いので、振幅を見て静かな区間は ASR へ供給しない。
+
+| 状態        | CPU (1 コア基準)              |
+| ----------- | ----------------------------- |
+| 待機 (無音) | 0.0%                          |
+| 音声あり    | 供給している間だけ april の分 |
+
+止めたぶん ASR の内部時計は進まなくなるので、差を `skipped_samples` で持ち、segment を組むときに足し戻している。リングバッファには無音も含めて常に入れるため、聞き直しは影響を受けない。`--silence-threshold 0` でゲートを切れる。
+
+whisper の差し替えは同時に 1 本までに絞り、600ms 未満の区間には掛けない (相槌や物音が大半で、CPU を使うわりに得るものが無い)。スレッド数の既定は 2。
+
+子プロセス (`pw-record` / `whisper-server` / `overhear-server`) は `PR_SET_PDEATHSIG` で親と一緒に落ちる。親が SIGKILL されると Drop が走らないため、これが無いと ASR を抱えたプロセスが孤児として残り、1 コアずつ食い続ける。
+
 ## 既知の制約
 
 - **聞き直しの再生音は既定シンクの monitor に戻ってくる。** フロントは再生の前に `muteCapture` を呼び、その間の入力を無音に差し替えている (破棄ではなく無音なのは ASR とリングバッファの時間軸を止めないため)。裏返しとして、**再生中は実際の音声が書き起こされない**
 - `/audio/{id}.wav` は Range 未対応。数秒のクリップ前提で全体を返す
 - whisper は語ごとの時刻を返さないため、差し替え後のトークンの時刻は segment の区間に均等割りしている
 - 字幕バーの背景透過はコンポジットが有効な環境でのみ効く。無効なら単に不透明になる (壊れはしない)
+- 字幕バーとスタジオは別の HTML (`caption.html` / `index.html`)。`?window=caption` のようなクエリでの振り分けは vite の dev サーバでは通るが、配布ビルドのアセット解決では失敗する
+- パッケージ版の WM class は wrapper 由来の名前 (`.overhear-wrapped`) になる。argv0 を変えても追従しないため、desktop entry に `StartupWMClass` は入れていない。ランチャのアイコンとウィンドウが紐づかないだけで、起動と動作には影響しない
 - whisper は `[MUSIC PLAYING]` のような非発話マーカーを返す。発話に混ざっている場合だけ取り除き、区間全体がマーカーのときは台詞が無いことを示すために残す
 - april-asr は英語モデルのみ。話者分離は無い
 - API キーは環境変数から読む (keyring 未対応)

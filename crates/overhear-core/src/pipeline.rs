@@ -4,6 +4,7 @@
 //! 肝で、two-pass ASR の差し替えもフロント側では通常の更新として扱える。
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,9 @@ use crate::anki::{AnkiConnect, AnkiNote, DEFAULT_DECK, DEFAULT_MODEL};
 use crate::asr::whisper::WhisperRefiner;
 use crate::asr::{AsrEvent, AsrToken, Recognizer};
 use crate::audio::{self, CaptureConfig, CaptureHandle};
+use crate::devices::{self, AudioDevice, DeviceKind};
 use crate::dict::{DictEntry, DictionaryRegistry, normalize_surface};
+use crate::gate::SilenceGate;
 use crate::model::{Segment, SegmentId, SegmentStatus, Token};
 use crate::ring::RingBuffer;
 use crate::translate::{TranslateRequest, TranslatorRegistry};
@@ -22,6 +25,10 @@ use crate::vocab::{NewVocab, VocabItem, VocabStore};
 
 /// Final の末尾に足す余白。発話末が切れた音声を書き出さないため。
 const TAIL_MARGIN_MS: u64 = 500;
+
+/// これより短い区間は whisper に掛けない。
+/// 相槌や物音の誤検出が大半で、CPU を使うわりに得るものが無い。
+const MIN_REFINE_MS: u64 = 600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineChoice {
@@ -39,6 +46,8 @@ pub struct RuntimeConfig {
     pub history_limit: usize,
     pub engine: EngineChoice,
     pub capture: CaptureConfig,
+    /// 無音とみなす振幅のしきい値。0 でゲートを無効にする。
+    pub silence_threshold: u16,
 }
 
 impl Default for RuntimeConfig {
@@ -50,6 +59,7 @@ impl Default for RuntimeConfig {
             history_limit: 500,
             engine: EngineChoice::April,
             capture: CaptureConfig::default(),
+            silence_threshold: crate::gate::DEFAULT_THRESHOLD,
         }
     }
 }
@@ -89,10 +99,15 @@ pub struct Overhear {
     pub dictionaries: Arc<DictionaryRegistry>,
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
+    /// 差し替えは 1 本ずつ。バーストで whisper を並列に走らせない。
+    refine_lock: tokio::sync::Semaphore,
     /// この時刻までは入力を無音として扱う。聞き直しの再生音を
     /// 自分の monitor から拾い直さないための窓。
     mute_until: Arc<Mutex<Option<Instant>>>,
-    _capture: CaptureHandle,
+    /// 差し替えられるよう、キャプチャの子プロセスと供給先を持っておく。
+    capture: Mutex<Option<CaptureHandle>>,
+    capture_config: Mutex<CaptureConfig>,
+    audio_tx: mpsc::UnboundedSender<Vec<i16>>,
 }
 
 impl Overhear {
@@ -101,7 +116,8 @@ impl Overhear {
         let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<Vec<i16>>();
         let (asr_tx, mut asr_rx) = mpsc::unbounded_channel::<AsrEvent>();
 
-        let capture = audio::spawn(&config.capture, audio_tx).context("音声キャプチャの起動")?;
+        let capture =
+            audio::spawn(&config.capture, audio_tx.clone()).context("音声キャプチャの起動")?;
 
         let mut recognizer: Box<dyn Recognizer> = match config.engine {
             #[cfg(feature = "april")]
@@ -127,34 +143,60 @@ impl Overhear {
         let (updates, _) = broadcast::channel::<Segment>(256);
 
         let mute_until: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        // ASR へ供給しなかった累積サンプル数。ASR の内部時計はそのぶん
+        // 遅れるので、segment を組むときに足し戻す。
+        let skipped_samples = Arc::new(AtomicU64::new(0));
 
         // 音声を ring に溜めつつ ASR へ供給する。ASR 側はブロッキング API
         // なので専用スレッドに置く。
         {
             let ring = Arc::clone(&ring);
             let mute_until = Arc::clone(&mute_until);
+            let skipped_samples = Arc::clone(&skipped_samples);
+            let mut gate =
+                SilenceGate::new(config.silence_threshold, crate::gate::DEFAULT_HANGOVER);
+            let gate_enabled = config.silence_threshold > 0;
+
             tokio::task::spawn_blocking(move || {
                 while let Some(chunk) = audio_rx.blocking_recv() {
+                    // リングバッファには常に入れる。聞き直しは無音区間も
+                    // 含めて成立している必要がある。
+                    if let Ok(mut ring) = ring.lock() {
+                        ring.push(&chunk);
+                    }
+
                     let muted = mute_until
                         .lock()
                         .ok()
                         .and_then(|g| *g)
                         .is_some_and(|until| Instant::now() < until);
 
-                    // ミュート中は破棄せず無音に差し替える。破棄すると ASR に
-                    // 供給した累積時間が止まり、リングバッファの絶対時間軸と
-                    // ずれてしまうため。
-                    let data = if muted {
-                        vec![0i16; chunk.len()]
-                    } else {
-                        chunk
-                    };
-
-                    if let Ok(mut ring) = ring.lock() {
-                        ring.push(&data);
+                    if !gate_enabled {
+                        // ゲート無効時も、ミュート中は無音を送って時計を進める。
+                        let data = if muted {
+                            vec![0i16; chunk.len()]
+                        } else {
+                            chunk
+                        };
+                        if let Err(err) = recognizer.feed(&data) {
+                            tracing::warn!(?err, "ASR への供給に失敗した");
+                            break;
+                        }
+                        continue;
                     }
-                    if let Err(err) = recognizer.feed(&data) {
-                        tracing::warn!(?err, "ASR への供給に失敗した");
+
+                    // 静かな区間とミュート中は ASR を動かさない。ここが
+                    // 待機時の CPU をほぼゼロにする。
+                    let mut failed = false;
+                    for piece in gate.admit(&chunk, muted) {
+                        if let Err(err) = recognizer.feed(&piece) {
+                            tracing::warn!(?err, "ASR への供給に失敗した");
+                            failed = true;
+                            break;
+                        }
+                    }
+                    skipped_samples.store(gate.skipped_samples(), Ordering::Relaxed);
+                    if failed {
                         break;
                     }
                 }
@@ -173,17 +215,26 @@ impl Overhear {
             dictionaries: services.dictionaries,
             vocab: services.vocab,
             anki: services.anki,
+            refine_lock: tokio::sync::Semaphore::new(1),
             mute_until,
-            _capture: capture,
+            capture: Mutex::new(Some(capture)),
+            capture_config: Mutex::new(config.capture.clone()),
+            audio_tx,
         });
 
         // ASR イベントを segment に畳む。
         {
             let this = Arc::clone(&this);
+            let skipped_samples = Arc::clone(&skipped_samples);
+            let sample_rate = config.sample_rate as u64;
             tokio::spawn(async move {
                 let mut builder = SegmentBuilder::new(asr_engine);
                 while let Some(event) = asr_rx.recv().await {
-                    if let Some(segment) = builder.apply(event) {
+                    // ASR の時計は供給を止めたぶん遅れている。リングバッファと
+                    // 同じ絶対時間に戻してから segment にする。
+                    let offset_ms =
+                        skipped_samples.load(Ordering::Relaxed) * 1000 / sample_rate.max(1);
+                    if let Some(segment) = builder.apply(event, offset_ms) {
                         this.publish(segment);
                     }
                 }
@@ -224,6 +275,62 @@ impl Overhear {
                 segments.pop_front();
             }
         }
+    }
+
+    /// 音声の入出力ノードを列挙する。
+    pub fn audio_devices(&self) -> Vec<AudioDevice> {
+        devices::list().unwrap_or_else(|err| {
+            tracing::warn!(%err, "音声デバイスを列挙できなかった");
+            Vec::new()
+        })
+    }
+
+    /// 現在キャプチャしているノード。None なら既定シンク。
+    pub fn capture_target(&self) -> Option<String> {
+        self.capture_config
+            .lock()
+            .ok()
+            .and_then(|c| c.target.clone())
+    }
+
+    /// 拾う先を切り替える。`None` で既定シンクに戻す。
+    ///
+    /// pw-record の子プロセスだけを差し替え、ASR とリングバッファは
+    /// そのまま使い続ける。時間軸は受け取ったサンプル数で進むので、
+    /// 切り替えで生じる空白のぶん進まないだけで整合は崩れない。
+    pub fn set_capture_device(&self, device_id: Option<&str>) -> Result<()> {
+        let mut config = self
+            .capture_config
+            .lock()
+            .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
+
+        match device_id {
+            Some(id) => {
+                let device = self
+                    .audio_devices()
+                    .into_iter()
+                    .find(|d| d.id == id)
+                    .ok_or_else(|| anyhow::anyhow!("音声デバイスが見つからない: {id}"))?;
+                // 再生側なら monitor を、録音側ならそのまま掴む。
+                config.capture_sink = matches!(device.kind, DeviceKind::Sink);
+                config.target = Some(device.id);
+            }
+            None => {
+                config.capture_sink = true;
+                config.target = None;
+            }
+        }
+
+        let new_capture =
+            audio::spawn(&config, self.audio_tx.clone()).context("音声キャプチャの切り替え")?;
+        if let Ok(mut slot) = self.capture.lock() {
+            // 先に新しいものを立ててから古いものを止める。
+            if let Some(old) = slot.replace(new_capture) {
+                old.stop();
+            }
+        }
+        tracing::info!(target = ?config.target, "キャプチャ先を切り替えた");
+        Ok(())
     }
 
     /// 指定時間だけ入力を無音として扱う。
@@ -279,6 +386,13 @@ impl Overhear {
         if segment.asr_engine.contains("whisper") {
             return None; // 二重に掛けない
         }
+        if segment.duration_ms() < MIN_REFINE_MS {
+            return None; // 短すぎる区間は掛けるだけ無駄
+        }
+
+        // 同時に複数走らせない。whisper は実時間の 1/3 程度で処理するので、
+        // 発話が続いても 1 本で追いつく。
+        let _permit = self.refine_lock.acquire().await.ok()?;
 
         let audio = {
             let ring = self.ring.lock().ok()?;
@@ -480,13 +594,13 @@ impl SegmentBuilder {
         }
     }
 
-    fn apply(&mut self, event: AsrEvent) -> Option<Segment> {
+    fn apply(&mut self, event: AsrEvent, offset_ms: u64) -> Option<Segment> {
         match event {
             AsrEvent::Partial { text, tokens } => {
                 if text.is_empty() {
                     return None;
                 }
-                let segment = self.build(text, &tokens, SegmentStatus::Interim);
+                let segment = self.build(text, &tokens, SegmentStatus::Interim, offset_ms);
                 self.current = Some(segment.clone());
                 Some(segment)
             }
@@ -495,7 +609,7 @@ impl SegmentBuilder {
                     self.current = None;
                     return None;
                 }
-                let segment = self.build(text, &tokens, SegmentStatus::Final);
+                let segment = self.build(text, &tokens, SegmentStatus::Final, offset_ms);
                 // 次の Partial は新しい id で始まる。
                 self.current = None;
                 self.next_id += 1;
@@ -509,9 +623,19 @@ impl SegmentBuilder {
         }
     }
 
-    fn build(&self, text: String, tokens: &[AsrToken], status: SegmentStatus) -> Segment {
-        let start_ms = tokens.first().map(|t| t.time_ms).unwrap_or(0);
-        let last_ms = tokens.last().map(|t| t.time_ms).unwrap_or(start_ms);
+    fn build(
+        &self,
+        text: String,
+        tokens: &[AsrToken],
+        status: SegmentStatus,
+        offset_ms: u64,
+    ) -> Segment {
+        let start_ms = tokens.first().map(|t| t.time_ms).unwrap_or(0) + offset_ms;
+        let last_ms = tokens
+            .last()
+            .map(|t| t.time_ms)
+            .unwrap_or(start_ms - offset_ms)
+            + offset_ms;
         let end_ms = if status == SegmentStatus::Final {
             last_ms + TAIL_MARGIN_MS
         } else {
@@ -524,7 +648,7 @@ impl SegmentBuilder {
             end_ms,
             status,
             source_text: text,
-            tokens: merge_words(tokens),
+            tokens: merge_words(tokens, offset_ms),
             translations: self
                 .current
                 .as_ref()
@@ -541,7 +665,7 @@ impl SegmentBuilder {
 /// april-asr はサブワード単位で返す (`T` `RA` `N` `S` …) ため、そのままでは
 /// 単語クリックの辞書引きに使えない。語境界フラグ (または先頭の空白) で
 /// 区切り直して 1 語 1 トークンにする。
-fn merge_words(tokens: &[AsrToken]) -> Vec<Token> {
+fn merge_words(tokens: &[AsrToken], offset_ms: u64) -> Vec<Token> {
     let mut out: Vec<Token> = Vec::new();
     for t in tokens {
         let starts_word = t.word_boundary || t.raw.starts_with(' ');
@@ -549,7 +673,7 @@ fn merge_words(tokens: &[AsrToken]) -> Vec<Token> {
             out.push(Token {
                 index: 0, // 後で振り直す
                 surface: t.surface.clone(),
-                start_ms: t.time_ms,
+                start_ms: t.time_ms + offset_ms,
                 word_boundary: true,
                 sentence_end: t.sentence_end,
             });
@@ -593,7 +717,7 @@ mod tests {
             tok("N", false, 2560),
             tok("S", false, 2640),
         ];
-        let words = merge_words(&tokens);
+        let words = merge_words(&tokens, 0);
         let surfaces: Vec<&str> = words.iter().map(|t| t.surface.as_str()).collect();
         assert_eq!(surfaces, vec!["WELL,", "TRANS"]);
         assert_eq!(words[0].start_ms, 1680);

@@ -43,6 +43,15 @@ export type CaptureState = {
   asrEngine: string;
   targetLang: string;
   muted: boolean;
+  refiner: string | null;
+  captureTarget: string | null;
+};
+
+export type AudioDevice = {
+  id: string;
+  description: string;
+  kind: "SINK" | "SOURCE";
+  isDefault: boolean;
 };
 
 export type DictSense = {

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useSubscription } from "@apollo/client/react";
 import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
 
 import { CaptionBar } from "./components/CaptionBar";
+import { DevicePicker } from "./components/DevicePicker";
 import { EnginePicker } from "./components/EnginePicker";
 import { SegmentHistory } from "./components/SegmentHistory";
 import { VocabList } from "./components/VocabList";
@@ -13,6 +14,7 @@ import {
   formatMs,
 } from "./lib/config";
 import {
+  AUDIO_DEVICES,
   CAPTURE_STATE,
   EXPORT_TO_ANKI,
   MUTE_CAPTURE,
@@ -21,11 +23,13 @@ import {
   SAVE_VOCAB,
   SEGMENTS,
   SEGMENT_UPDATES,
+  SET_CAPTURE_DEVICE,
   TRANSLATION_ENGINES,
   VOCAB,
 } from "./lib/queries";
 import type {
   AnkiExportResult,
+  AudioDevice,
   CaptureState,
   Segment,
   TranslationEngineInfo,
@@ -54,6 +58,10 @@ export function App() {
   );
   const [retranslate] = useMutation(RETRANSLATE);
   const [muteCapture] = useMutation(MUTE_CAPTURE);
+  const { data: deviceData } = useQuery<{ audioDevices: AudioDevice[] }>(
+    AUDIO_DEVICES,
+  );
+  const [setCaptureDevice] = useMutation(SET_CAPTURE_DEVICE);
   const { data: vocabData, refetch: refetchVocab } = useQuery<{
     vocab: VocabItem[];
   }>(VOCAB, { variables: { limit: 200 } });
@@ -120,6 +128,7 @@ export function App() {
 
   const captureState = stateData?.captureState;
   const vocab = vocabData?.vocab ?? [];
+  const devices = deviceData?.audioDevices ?? [];
 
   const onSaveWord = useCallback(
     async (segmentId: string, tokenIndex: number) => {
@@ -170,17 +179,31 @@ export function App() {
           <h1 className="text-xl font-semibold">overhear</h1>
           {captureState && (
             <p className="text-xs text-ink-muted">
-              {captureState.asrEngine} · {captureState.sampleRate} Hz · バッファ{" "}
+              {captureState.asrEngine}
+              {captureState.refiner && ` + ${captureState.refiner}`} ·{" "}
+              {captureState.sampleRate} Hz · バッファ{" "}
               {formatMs(captureState.capturedMs)} / {captureState.ringSeconds}{" "}
               秒 · 訳先 {captureState.targetLang}
             </p>
           )}
         </div>
-        <EnginePicker
-          engines={engines}
-          selected={engineId}
-          onChange={setEngineId}
-        />
+        <div className="flex items-center gap-4">
+          <DevicePicker
+            devices={devices}
+            selected={captureState?.captureTarget ?? null}
+            onChange={(deviceId) => {
+              void setCaptureDevice({
+                variables: { deviceId },
+                refetchQueries: [CAPTURE_STATE],
+              });
+            }}
+          />
+          <EnginePicker
+            engines={engines}
+            selected={engineId}
+            onChange={setEngineId}
+          />
+        </div>
       </header>
 
       <CaptionBar

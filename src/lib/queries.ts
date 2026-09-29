@@ -53,6 +53,8 @@ export const CAPTURE_STATE = gql`
       asrEngine
       targetLang
       muted
+      refiner
+      captureTarget
     }
   }
 `;
@@ -149,6 +151,26 @@ export const EXPORT_TO_ANKI = gql`
         vocabId
         reason
       }
+    }
+  }
+`;
+
+export const AUDIO_DEVICES = gql`
+  query AudioDevices {
+    audioDevices {
+      id
+      description
+      kind
+      isDefault
+    }
+  }
+`;
+
+/** 拾う先を切り替える。deviceId を省くと既定シンクに戻る。 */
+export const SET_CAPTURE_DEVICE = gql`
+  mutation SetCaptureDevice($deviceId: ID) {
+    setCaptureDevice(deviceId: $deviceId) {
+      captureTarget
     }
   }
 `;

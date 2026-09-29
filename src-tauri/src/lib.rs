@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result, anyhow};
+use overhear_core::child::die_with_parent;
 use serde::Deserialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -57,9 +58,10 @@ fn server_binary() -> Result<PathBuf> {
 /// サーバを起動し、標準出力の 1 行目に出る接続情報を受け取る。
 fn start_server() -> Result<(Announce, ServerProcess)> {
     let bin = server_binary()?;
-    let mut child = Command::new(&bin)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+    let mut command = Command::new(&bin);
+    command.stdout(Stdio::piped()).stderr(Stdio::inherit());
+    // アプリが SIGKILL されても、april を抱えたサーバが残らないようにする。
+    let mut child = die_with_parent(&mut command)
         .spawn()
         .with_context(|| format!("{} の起動", bin.display()))?;
 
@@ -89,20 +91,16 @@ fn init_script(announce: &Announce) -> String {
 
 /// 常時最前面・枠なしの字幕バーを画面下部に貼る。
 fn build_caption_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> {
-    let window = WebviewWindowBuilder::new(
-        app,
-        "caption",
-        WebviewUrl::App("index.html?window=caption".into()),
-    )
-    .title("overhear — 字幕")
-    .inner_size(960.0, CAPTION_HEIGHT)
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .resizable(true)
-    .transparent(true)
-    .initialization_script(script)
-    .build()?;
+    let window = WebviewWindowBuilder::new(app, "caption", WebviewUrl::App("caption.html".into()))
+        .title("overhear — 字幕")
+        .inner_size(960.0, CAPTION_HEIGHT)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(true)
+        .transparent(true)
+        .initialization_script(script)
+        .build()?;
 
     // 画面下部の中央へ寄せる。モニタが取れない環境では既定位置のままにする。
     if let Ok(Some(monitor)) = window.primary_monitor() {
@@ -212,9 +210,8 @@ pub fn run() {
         .setup(|app| {
             let (announce, process) = start_server()?;
             tracing::info!(endpoint = %announce.graphql, "overhear-server に接続する");
-            let script = init_script(&announce);
-
             let handle = app.handle();
+            let script = init_script(&announce);
             build_caption_window(handle, &script)?;
             build_studio_window(handle, &script)?;
             build_tray(handle)?;

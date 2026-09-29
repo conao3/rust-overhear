@@ -11,7 +11,8 @@ use overhear_core::Overhear;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::types::{
-    AnkiExportResult, CaptureState, DictEntry, Segment, TranslationEngineInfo, VocabItem,
+    AnkiExportResult, AudioDevice, CaptureState, DictEntry, Segment, TranslationEngineInfo,
+    VocabItem,
 };
 
 pub type OverhearSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
@@ -38,6 +39,7 @@ fn capture_state(overhear: &Overhear) -> CaptureState {
         target_lang: overhear.config.target_lang.clone(),
         muted: overhear.is_muted(),
         refiner: overhear.whisper.as_ref().map(|_| "whisper.cpp".to_string()),
+        capture_target: overhear.capture_target(),
     }
 }
 
@@ -64,6 +66,15 @@ impl QueryRoot {
 
     async fn capture_state(&self, ctx: &Context<'_>) -> CaptureState {
         capture_state(&engine(ctx))
+    }
+
+    /// 音声の入出力ノード。どこの音を拾うかを選ばせる。
+    async fn audio_devices(&self, ctx: &Context<'_>) -> Vec<AudioDevice> {
+        engine(ctx)
+            .audio_devices()
+            .into_iter()
+            .map(AudioDevice::from)
+            .collect()
     }
 
     /// 単語を辞書で引く。活用は見出し語へ解かれる。
@@ -120,6 +131,19 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
+    /// 拾う先を切り替える。deviceId を省くと既定シンクに戻る。
+    async fn set_capture_device(
+        &self,
+        ctx: &Context<'_>,
+        device_id: Option<ID>,
+    ) -> async_graphql::Result<CaptureState> {
+        let overhear = engine(ctx);
+        overhear
+            .set_capture_device(device_id.as_ref().map(|d| d.as_str()))
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(capture_state(&overhear))
+    }
+
     /// segment の 1 語を語彙ストアへ保存する。
     ///
     /// 保存時点の文・訳・語義・音声を焼き付けるので、後から segment が

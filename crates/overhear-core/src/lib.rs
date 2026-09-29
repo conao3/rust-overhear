@@ -5,7 +5,10 @@
 pub mod anki;
 pub mod asr;
 pub mod audio;
+pub mod child;
+pub mod devices;
 pub mod dict;
+pub mod gate;
 pub mod model;
 pub mod pipeline;
 pub mod ring;
