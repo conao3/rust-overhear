@@ -108,24 +108,27 @@ impl QueryRoot {
 
     /// 登録済み翻訳ストラテジーの一覧と利用可否。
     async fn translation_engines(&self, ctx: &Context<'_>) -> Vec<TranslationEngineInfo> {
-        let overhear = engine(ctx);
-        let default_id = overhear.translators.default_id().to_string();
-        let mut out = Vec::new();
-        for engine in overhear.translators.list() {
-            let caps = engine.capabilities();
-            let availability = engine.availability().await;
-            out.push(TranslationEngineInfo {
-                id: ID(engine.id().to_string()),
-                display_name: engine.display_name().to_string(),
-                available: availability.available,
-                unavailable_reason: availability.reason,
-                sends_data_externally: caps.sends_data_externally,
-                supported_target_langs: caps.supported_target_langs,
-                is_default: engine.id() == default_id,
-            });
-        }
-        out
+        translation_engines(&engine(ctx)).await
     }
+}
+
+async fn translation_engines(overhear: &Overhear) -> Vec<TranslationEngineInfo> {
+    let default_id = overhear.translators.default_id();
+    let mut out = Vec::new();
+    for engine in overhear.translators.list() {
+        let caps = engine.capabilities();
+        let availability = engine.availability().await;
+        out.push(TranslationEngineInfo {
+            id: ID(engine.id().to_string()),
+            display_name: engine.display_name().to_string(),
+            available: availability.available,
+            unavailable_reason: availability.reason,
+            sends_data_externally: caps.sends_data_externally,
+            supported_target_langs: caps.supported_target_langs,
+            is_default: engine.id() == default_id,
+        });
+    }
+    out
 }
 
 pub struct MutationRoot;
@@ -143,6 +146,19 @@ impl MutationRoot {
             .set_capture_device(device_id.as_ref().map(|d| d.as_str()))
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         Ok(capture_state(&overhear))
+    }
+
+    /// 自動翻訳に使うエンジンを切り替える。次の起動にも持ち越す。
+    async fn set_default_translator(
+        &self,
+        ctx: &Context<'_>,
+        engine_id: ID,
+    ) -> async_graphql::Result<Vec<TranslationEngineInfo>> {
+        let overhear = engine(ctx);
+        overhear
+            .set_default_translator(engine_id.as_str())
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(translation_engines(&overhear).await)
     }
 
     /// segment の 1 語を語彙ストアへ保存する。

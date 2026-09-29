@@ -75,6 +75,8 @@ whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入ってお�
 
 語彙と音声クリップは `$XDG_DATA_HOME/overhear` (既定 `~/.local/share/overhear`) に置く。`OVERHEAR_DATA_DIR` で変えられる。
 
+スタジオで選んだ翻訳エンジンと音源は同じディレクトリの `settings.json` に残り、次の起動で戻る。保存した音源が見つからない (USB の機器を抜いた等) ときは警告を出して既定シンクで起動する。`--translator` を渡した起動では保存値より引数を優先する。
+
 ## 入れる
 
 ```sh
@@ -113,7 +115,7 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 | `google`        | `OVERHEAR_GOOGLE_API_KEY`                            | する     |
 | `none`          | —                                                    | しない   |
 
-指定エンジンが失敗すると既定エンジンへフォールバックし、`Translation.fallbackFrom` に元のエンジン id が残る。フォールバック先も失敗した場合は翻訳なしで segment を確定させ、字幕そのものは止めない。
+スタジオの「翻訳エンジン」で選んだものが自動翻訳の既定になる。指定エンジンが失敗すると既定エンジンへフォールバックし、`Translation.fallbackFrom` に元のエンジン id が残る。フォールバック先も失敗した場合は翻訳なしで segment を確定させ、字幕そのものは止めない。
 
 ### Ollama
 

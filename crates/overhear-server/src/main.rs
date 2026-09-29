@@ -25,6 +25,7 @@ use overhear_core::asr::whisper::WhisperRefiner;
 use overhear_core::dict::DictionaryRegistry;
 use overhear_core::pipeline::Services;
 use overhear_core::ring::encode_wav;
+use overhear_core::settings::SettingsStore;
 use overhear_core::translate::TranslatorRegistry;
 use overhear_core::vocab::VocabStore;
 use overhear_core::{EngineChoice, Overhear, RuntimeConfig};
@@ -75,9 +76,9 @@ struct Args {
     #[arg(long, default_value = "ja")]
     target_lang: String,
 
-    /// 既定の翻訳エンジン。
-    #[arg(long, default_value = "ollama")]
-    translator: String,
+    /// 既定の翻訳エンジン。省くと前回 UI で選んだもの、それも無ければ ollama。
+    #[arg(long)]
+    translator: Option<String>,
 }
 
 #[derive(Clone)]
@@ -198,8 +199,17 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let mut registry = TranslatorRegistry::with_defaults().context("翻訳エンジンの設定")?;
-    registry.set_default(&args.translator);
+    let data_dir = overhear_core::data_dir()?;
+    let settings = Arc::new(SettingsStore::open(&data_dir).context("設定を読めない")?);
+
+    let registry = TranslatorRegistry::with_defaults().context("翻訳エンジンの設定")?;
+    if let Some(id) = args
+        .translator
+        .clone()
+        .or_else(|| settings.get().translator)
+    {
+        registry.set_default(&id)?;
+    }
 
     let config = RuntimeConfig {
         silence_threshold: args.silence_threshold,
@@ -217,7 +227,7 @@ async fn main() -> Result<()> {
     if dictionaries.is_empty() {
         tracing::warn!("辞書が 1 つも読み込めなかった。単語の語義は出ない");
     }
-    let vocab = VocabStore::open_default().context("語彙ストアを開けない")?;
+    let vocab = VocabStore::open(&data_dir).context("語彙ストアを開けない")?;
     tracing::info!(saved = vocab.count().unwrap_or(0), "語彙ストアを読み込んだ");
 
     // 後段が用意できなければ april の出力をそのまま確定として使う。
@@ -258,6 +268,7 @@ async fn main() -> Result<()> {
         dictionaries: Arc::new(dictionaries),
         vocab: Arc::new(vocab),
         anki: Arc::new(AnkiConnect::from_env()),
+        settings,
     };
 
     let overhear = Overhear::start(config, services).context("パイプラインの起動")?;

@@ -43,18 +43,6 @@ pub struct VocabStore {
 }
 
 impl VocabStore {
-    /// `$XDG_DATA_HOME/overhear`(既定 `~/.local/share/overhear`) に開く。
-    pub fn open_default() -> Result<Self> {
-        let base = std::env::var("OVERHEAR_DATA_DIR")
-            .map(PathBuf::from)
-            .or_else(|_| std::env::var("XDG_DATA_HOME").map(|d| PathBuf::from(d).join("overhear")))
-            .or_else(|_| {
-                std::env::var("HOME").map(|h| PathBuf::from(h).join(".local/share/overhear"))
-            })
-            .context("データディレクトリを決められない")?;
-        Self::open(base)
-    }
-
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
         let data_dir = data_dir.as_ref().to_path_buf();
         std::fs::create_dir_all(data_dir.join("audio")).context("データディレクトリの作成")?;

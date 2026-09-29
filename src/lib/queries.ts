@@ -73,6 +73,16 @@ export const TRANSLATION_ENGINES = gql`
   }
 `;
 
+/** 自動翻訳に使うエンジンを切り替える。サーバが次の起動にも持ち越す。 */
+export const SET_DEFAULT_TRANSLATOR = gql`
+  mutation SetDefaultTranslator($engineId: ID!) {
+    setDefaultTranslator(engineId: $engineId) {
+      id
+      isDefault
+    }
+  }
+`;
+
 export const RETRANSLATE = gql`
   ${SEGMENT_FIELDS}
   mutation Retranslate($segmentId: ID!, $engineId: ID) {

@@ -20,6 +20,7 @@ use crate::dict::{DictEntry, DictionaryRegistry, normalize_surface};
 use crate::gate::SilenceGate;
 use crate::model::{Segment, SegmentId, SegmentStatus, Token};
 use crate::ring::RingBuffer;
+use crate::settings::SettingsStore;
 use crate::translate::{TranslateRequest, TranslatorRegistry};
 use crate::vocab::{NewVocab, VocabItem, VocabStore};
 
@@ -75,6 +76,7 @@ pub struct Services {
     pub dictionaries: Arc<DictionaryRegistry>,
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
+    pub settings: Arc<SettingsStore>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -99,6 +101,7 @@ pub struct Overhear {
     pub dictionaries: Arc<DictionaryRegistry>,
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
+    settings: Arc<SettingsStore>,
     /// 差し替えは 1 本ずつ。バーストで whisper を並列に走らせない。
     refine_lock: tokio::sync::Semaphore,
     /// 翻訳待ちの segment。1 本の worker が新しいものから訳す。
@@ -115,7 +118,16 @@ pub struct Overhear {
 
 impl Overhear {
     /// キャプチャと ASR を起動する。tokio のランタイム上で呼ぶこと。
-    pub fn start(config: RuntimeConfig, services: Services) -> Result<Arc<Self>> {
+    pub fn start(mut config: RuntimeConfig, services: Services) -> Result<Arc<Self>> {
+        // 前回選んだ音源に戻す。抜かれた USB 機器のように見つからなければ
+        // 既定シンクで起動する (起動できないよりよい)。
+        if let Some(saved) = services.settings.get().capture_target {
+            match resolve_capture(&config.capture, Some(&saved)) {
+                Ok(capture) => config.capture = capture,
+                Err(err) => tracing::warn!(%err, "保存した音源が無いので既定シンクで起動する"),
+            }
+        }
+
         let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<Vec<i16>>();
         let (asr_tx, mut asr_rx) = mpsc::unbounded_channel::<AsrEvent>();
 
@@ -218,6 +230,7 @@ impl Overhear {
             dictionaries: services.dictionaries,
             vocab: services.vocab,
             anki: services.anki,
+            settings: services.settings,
             refine_lock: tokio::sync::Semaphore::new(1),
             translate_queue: Mutex::new(TranslationQueue::default()),
             translate_wake: tokio::sync::Notify::new(),
@@ -349,23 +362,7 @@ impl Overhear {
             .capture_config
             .lock()
             .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
-
-        match device_id {
-            Some(id) => {
-                let device = self
-                    .audio_devices()
-                    .into_iter()
-                    .find(|d| d.id == id)
-                    .ok_or_else(|| anyhow::anyhow!("音声デバイスが見つからない: {id}"))?;
-                // 再生側なら monitor を、録音側ならそのまま掴む。
-                config.capture_sink = matches!(device.kind, DeviceKind::Sink);
-                config.target = Some(device.id);
-            }
-            None => {
-                config.capture_sink = true;
-                config.target = None;
-            }
-        }
+        *config = resolve_capture(&config, device_id)?;
 
         let new_capture =
             audio::spawn(&config, self.audio_tx.clone()).context("音声キャプチャの切り替え")?;
@@ -376,7 +373,15 @@ impl Overhear {
             }
         }
         tracing::info!(target = ?config.target, "キャプチャ先を切り替えた");
-        Ok(())
+        let target = config.target.clone();
+        self.settings.update(|s| s.capture_target = target)
+    }
+
+    /// 自動翻訳に使うエンジンを切り替え、次の起動にも持ち越す。
+    pub fn set_default_translator(&self, id: &str) -> Result<()> {
+        self.translators.set_default(id)?;
+        self.settings
+            .update(|s| s.translator = Some(id.to_string()))
     }
 
     /// 指定時間だけ入力を無音として扱う。
@@ -585,6 +590,28 @@ impl Overhear {
         let _ = self.updates.send(updated.clone());
         Some(updated)
     }
+}
+
+/// 拾う先を決める。`None` で既定シンク。
+///
+/// 再生側 (シンク) なら monitor を、録音側 (ソース) ならそのまま掴む。
+fn resolve_capture(base: &CaptureConfig, device_id: Option<&str>) -> Result<CaptureConfig> {
+    let mut config = base.clone();
+    match device_id {
+        Some(id) => {
+            let device = devices::list()?
+                .into_iter()
+                .find(|d| d.id == id)
+                .ok_or_else(|| anyhow::anyhow!("音声デバイスが見つからない: {id}"))?;
+            config.capture_sink = matches!(device.kind, DeviceKind::Sink);
+            config.target = Some(device.id);
+        }
+        None => {
+            config.capture_sink = true;
+            config.target = None;
+        }
+    }
+    Ok(config)
 }
 
 /// 翻訳待ちの segment id。同じ id は 1 度だけ積む。

@@ -3,7 +3,7 @@
 //! 既定はローカルモデル (Ollama)。DeepL / Google Translate は必要に応じて
 //! ユーザーが選ぶ。呼び出し側はどの実装が動いているかを知らない。
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 
@@ -97,7 +97,8 @@ pub fn language_name(code: &str) -> &str {
 /// 登録済みストラテジーの一覧と、既定エンジンの解決を持つ。
 pub struct TranslatorRegistry {
     engines: Vec<Arc<dyn Translator>>,
-    default_id: String,
+    /// 実行中に UI から切り替えられる。
+    default_id: RwLock<String>,
 }
 
 impl TranslatorRegistry {
@@ -111,16 +112,28 @@ impl TranslatorRegistry {
         ];
         Ok(Self {
             engines,
-            default_id: "ollama".to_string(),
+            default_id: RwLock::new("ollama".to_string()),
         })
     }
 
-    pub fn set_default(&mut self, id: impl Into<String>) {
-        self.default_id = id.into();
+    /// 既定エンジンを切り替える。登録されていない id は拒む。
+    pub fn set_default(&self, id: &str) -> anyhow::Result<()> {
+        if self.get(id).is_none() {
+            anyhow::bail!("翻訳エンジン {id} は登録されていない");
+        }
+        let mut default_id = self
+            .default_id
+            .write()
+            .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
+        *default_id = id.to_string();
+        Ok(())
     }
 
-    pub fn default_id(&self) -> &str {
-        &self.default_id
+    pub fn default_id(&self) -> String {
+        self.default_id
+            .read()
+            .map(|id| id.clone())
+            .unwrap_or_default()
     }
 
     pub fn list(&self) -> &[Arc<dyn Translator>] {
@@ -129,7 +142,7 @@ impl TranslatorRegistry {
 
     /// 既定エンジンの準備を済ませる。
     pub async fn warm_up_default(&self) {
-        let Some(engine) = self.get(&self.default_id) else {
+        let Some(engine) = self.get(&self.default_id()) else {
             return;
         };
         let started = std::time::Instant::now();
@@ -156,7 +169,8 @@ impl TranslatorRegistry {
         engine_id: Option<&str>,
         req: &TranslateRequest,
     ) -> Option<Translation> {
-        let wanted = engine_id.unwrap_or(&self.default_id);
+        let default_id = self.default_id();
+        let wanted = engine_id.unwrap_or(&default_id);
         if let Some(engine) = self.get(wanted) {
             match engine.translate(req).await {
                 Ok(text) => {
@@ -173,10 +187,10 @@ impl TranslatorRegistry {
             }
         }
 
-        if wanted == self.default_id {
+        if wanted == default_id {
             return None;
         }
-        let fallback = self.get(&self.default_id)?;
+        let fallback = self.get(&default_id)?;
         match fallback.translate(req).await {
             Ok(text) => Some(Translation {
                 engine_id: fallback.id().to_string(),
@@ -203,5 +217,15 @@ mod tests {
         assert_eq!(language_name("en-US"), "English");
         assert_eq!(language_name("zh_TW"), "Chinese");
         assert_eq!(language_name("tlh"), "tlh");
+    }
+
+    #[test]
+    fn default_engine_switches_only_to_registered_ids() {
+        let registry = TranslatorRegistry::with_defaults().unwrap();
+        assert_eq!(registry.default_id(), "ollama");
+        registry.set_default("none").unwrap();
+        assert_eq!(registry.default_id(), "none");
+        assert!(registry.set_default("nope").is_err());
+        assert_eq!(registry.default_id(), "none");
     }
 }

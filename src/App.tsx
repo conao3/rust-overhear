@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useSubscription } from "@apollo/client/react";
 
 import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
@@ -24,6 +24,7 @@ import {
   SEGMENTS,
   SEGMENT_UPDATES,
   SET_CAPTURE_DEVICE,
+  SET_DEFAULT_TRANSLATOR,
   TRANSLATION_ENGINES,
   VOCAB,
 } from "./lib/queries";
@@ -39,7 +40,6 @@ import type {
 const HISTORY_LIMIT = 50;
 
 export function App() {
-  const [engineId, setEngineId] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -57,6 +57,7 @@ export function App() {
     },
   );
   const [retranslate] = useMutation(RETRANSLATE);
+  const [setDefaultTranslator] = useMutation(SET_DEFAULT_TRANSLATOR);
   const [muteCapture] = useMutation(MUTE_CAPTURE);
   const { data: deviceData } = useQuery<{ audioDevices: AudioDevice[] }>(
     AUDIO_DEVICES,
@@ -92,12 +93,7 @@ export function App() {
   const segments = useMemo(() => segmentsData?.segments ?? [], [segmentsData]);
   const latest = segments.at(-1) ?? null;
   const engines = engineData?.translationEngines ?? [];
-
-  useEffect(() => {
-    if (engineId === null && engines.length > 0) {
-      setEngineId(engines.find((e) => e.isDefault)?.id ?? engines[0].id);
-    }
-  }, [engineId, engines]);
+  const engineId = engines.find((e) => e.isDefault)?.id ?? null;
 
   const play = useCallback(
     async (url: string, durationMs: number) => {
@@ -203,7 +199,9 @@ export function App() {
           <EnginePicker
             engines={engines}
             selected={engineId}
-            onChange={setEngineId}
+            onChange={(id) => {
+              void setDefaultTranslator({ variables: { engineId: id } });
+            }}
           />
         </div>
       </header>
