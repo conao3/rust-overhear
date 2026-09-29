@@ -14,7 +14,7 @@ use crate::anki::{AnkiConnect, AnkiNote, DEFAULT_DECK, DEFAULT_MODEL};
 use crate::asr::whisper::WhisperRefiner;
 use crate::asr::{AsrEvent, AsrToken, Recognizer};
 use crate::audio::{self, CaptureConfig, CaptureHandle};
-use crate::dict::{DictEntry, DictionaryRegistry};
+use crate::dict::{DictEntry, DictionaryRegistry, normalize_surface};
 use crate::model::{Segment, SegmentId, SegmentStatus, Token};
 use crate::ring::RingBuffer;
 use crate::translate::{TranslateRequest, TranslatorRegistry};
@@ -449,17 +449,6 @@ fn words_from_text(text: &str, start_ms: u64, end_ms: u64) -> Vec<Token> {
             sentence_end: word.ends_with(['.', '!', '?']),
         })
         .collect()
-}
-
-/// 辞書に載らない語のフォールバック。句読点と所有格を落として小文字にする。
-fn normalize_surface(surface: &str) -> String {
-    let trimmed = surface
-        .trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '\'')
-        .to_lowercase();
-    trimmed
-        .strip_suffix("'s")
-        .map(str::to_string)
-        .unwrap_or(trimmed)
 }
 
 /// Anki の裏面。語義・原文・訳をこの順で並べる。

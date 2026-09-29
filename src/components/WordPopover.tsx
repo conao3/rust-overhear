@@ -62,12 +62,19 @@ export function WordPopover({ token, segmentId, onSave, saving }: Props) {
           )}
 
           <div className="mt-3 flex max-h-72 flex-col gap-3 overflow-y-auto">
-            {entries.map((entry) => (
-              <div key={`${entry.lemma}-${entry.posLabel}`}>
+            {entries.map((entry, index) => (
+              <div
+                key={`${entry.source}-${entry.lemma}-${entry.posLabel ?? index}`}
+              >
                 <div className="text-sm">
                   <span className="font-medium">{entry.lemma}</span>
-                  <span className="ml-2 rounded bg-white/10 px-1 text-[10px] text-ink-muted">
-                    {entry.posLabel}
+                  {entry.posLabel && (
+                    <span className="ml-2 rounded bg-white/10 px-1 text-[10px] text-ink-muted">
+                      {entry.posLabel}
+                    </span>
+                  )}
+                  <span className="ml-2 text-[10px] text-ink-muted opacity-60">
+                    {entry.source}
                   </span>
                 </div>
                 <ol className="mt-1 list-decimal pl-5 text-sm text-ink-muted">

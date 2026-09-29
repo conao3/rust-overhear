@@ -50,12 +50,12 @@ Tauri が持つのはウィンドウとプロセス管理だけで、ドメイ�
 - Linux + PipeWire (`pw-record`)
 - april-asr の共有ライブラリとモデル
 - whisper.cpp (`whisper-server`) と ggml モデル
-- WordNet 3.0 (英英辞書)
+- WordNet 3.0 (英英辞書) と ejdict-hand (英和辞書)
 - Anki + AnkiConnect アドオン (カード書き出しを使う場合のみ)
 
 `libaprilasr.so` は nixpkgs に単体パッケージが無く、**`livecaptions` の出力に同梱**されている。flake の devShell がこれを `APRIL_LIB_DIR` で指し、モデルを `APRIL_MODEL_PATH` に注入する。
 
-WordNet も nixpkgs の `wordnet` に `dict/` が入っているため、追加のダウンロードは要らない (`WORDNET_DICT_DIR`)。
+WordNet も nixpkgs の `wordnet` に `dict/` が入っているため、追加のダウンロードは要らない (`WORDNET_DICT_DIR`)。英和の ejdict-hand はパブリックドメインのタブ区切りテキストを flake が `fetchzip` で固定する (`EJDICT_PATH`)。
 
 whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入っており、モデル (`ggml-base.en.bin`) は flake が `fetchurl` で固定する (`WHISPER_MODEL_PATH`)。`whisper-server` は子プロセスとして 1 度だけ起動するので、モデルの読み込みは 1 回で済む。`--no-whisper` で後段を切れる。
 
@@ -100,10 +100,9 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 - [x] 翻訳ストラテジー (ollama / deepl / google / none) とフォールバック
 - [x] 聞き直しの再生音を拾い直さないミュート (`muteCapture`)
 - [x] two-pass ASR。april の即時出力を whisper.cpp の確定文へ差し替える
-- [x] 辞書 (WordNet 3.0)。活用は見出し語へ解く
+- [x] 辞書。英和 (ejdict-hand) と英英 (WordNet 3.0) を並べて出す。活用は見出し語へ解く
 - [x] 語彙ストア (SQLite)。文・訳・語義・音声を保存時に焼き付ける
 - [x] Anki 書き出し (AnkiConnect)。音声つきカードを作る
-- [ ] 英和辞書 (現状は英英のみ)
 - [ ] `pipewire-rs` 直結、デバイス選択、グローバルホットキー、nix パッケージ化
 - [ ] API キーの Secret Service (keyring) 保存 (現状は環境変数)
 

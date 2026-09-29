@@ -162,14 +162,7 @@ impl Dictionary for WordNet {
     }
 
     fn lookup(&self, surface: &str) -> Vec<DictEntry> {
-        // 句読点と所有格を落としてから引く。
-        let cleaned: String = surface
-            .trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '\'')
-            .to_lowercase();
-        let cleaned = cleaned
-            .strip_suffix("'s")
-            .map(str::to_string)
-            .unwrap_or(cleaned);
+        let cleaned = super::normalize_surface(surface);
         if cleaned.is_empty() {
             return Vec::new();
         }
@@ -181,7 +174,7 @@ impl Dictionary for WordNet {
                 if !senses.is_empty() {
                     entries.push(DictEntry {
                         lemma,
-                        pos,
+                        pos: Some(pos),
                         senses,
                         source: "wordnet".to_string(),
                     });
@@ -323,7 +316,7 @@ mod tests {
         };
         let entries = wn.lookup("dog");
         assert!(!entries.is_empty(), "dog が引けない");
-        let noun = entries.iter().find(|e| e.pos == Pos::Noun).unwrap();
+        let noun = entries.iter().find(|e| e.pos == Some(Pos::Noun)).unwrap();
         assert_eq!(noun.lemma, "dog");
         assert!(noun.senses[0].definition.contains("domesticated"));
     }

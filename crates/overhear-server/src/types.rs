@@ -133,8 +133,9 @@ pub struct DictSense {
 pub struct DictEntry {
     /// 活用を解いた見出し語。
     pub lemma: String,
-    pub pos: Pos,
-    pub pos_label: String,
+    /// 品詞。辞書によっては持たない (英和など)。
+    pub pos: Option<Pos>,
+    pub pos_label: Option<String>,
     pub senses: Vec<DictSense>,
     pub source: String,
 }
@@ -179,9 +180,9 @@ impl From<core_dict::DictSense> for DictSense {
 impl From<core_dict::DictEntry> for DictEntry {
     fn from(e: core_dict::DictEntry) -> Self {
         Self {
-            pos_label: e.pos.label().to_string(),
+            pos_label: e.pos.map(|p| p.label().to_string()),
             lemma: e.lemma,
-            pos: e.pos.into(),
+            pos: e.pos.map(Pos::from),
             senses: e.senses.into_iter().map(DictSense::from).collect(),
             source: e.source,
         }

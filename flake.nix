@@ -33,6 +33,13 @@
 
               # two-pass ASR の後段。april の即時出力を、句読点つきの
               # 確定文へ差し替えるために使う。
+              # 英和辞書 (パブリックドメイン)。
+              ejdict = final.fetchzip {
+                name = "ejdic-hand";
+                url = "https://github.com/kujirahand/EJDict/releases/download/v2.0.1/ejdic-hand-txt.zip";
+                hash = "sha256-vw9Qs3p01MTsi+VZ320/Sd+/IMibqtc7JEHiC9GjYzI=";
+              };
+
               whisper-model = final.fetchurl {
                 name = "ggml-base.en.bin";
                 url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
@@ -46,6 +53,7 @@
                 rustToolchain
                 april-model
                 whisper-model
+                ejdict
                 ;
             };
 
@@ -91,6 +99,7 @@
               # 追加のダウンロードは要らない。
               WORDNET_DICT_DIR = "${pkgs.wordnet}/dict";
               WHISPER_MODEL_PATH = "${pkgs.whisper-model}";
+              EJDICT_PATH = "${pkgs.ejdict}/ejdict-hand-utf8.txt";
               APRIL_MODEL_PATH = "${pkgs.april-model}";
               LD_LIBRARY_PATH = aprilLibDir;
               GIO_MODULE_PATH = "${pkgs.glib-networking}/lib/gio/modules";
