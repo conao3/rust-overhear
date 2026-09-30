@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 /// 字幕バーの高さ。画面下部にこの高さで貼り付ける。
@@ -191,6 +191,14 @@ pub fn run() {
     let studio_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS);
 
     tauri::Builder::default()
+        // 2 つ目を起動したら、そちらは終わって既に動いているほうのスタジオを出す。
+        // 先に登録しないと、2 つ目が他のプラグインを初期化してしまう。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
@@ -200,8 +208,6 @@ pub fn run() {
         )
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([caption_shortcut, studio_shortcut])
-                .expect("グローバルショートカットの登録")
                 .with_handler(move |app, shortcut, event| {
                     // 押し下げだけを拾う (離した分で二重に反応させない)。
                     if event.state() != ShortcutState::Pressed {
@@ -215,8 +221,14 @@ pub fn run() {
                 })
                 .build(),
         )
-        .setup(|app| {
+        .setup(move |app| {
             let from_autostart = std::env::args().any(|a| a == autostart::AUTOSTART_ARG);
+            // 他のアプリが同じキーを使っていても起動は続ける。トレイからは操作できる。
+            for shortcut in [caption_shortcut, studio_shortcut] {
+                if let Err(err) = app.global_shortcut().register(shortcut) {
+                    tracing::warn!(%err, ?shortcut, "グローバルホットキーを登録できなかった");
+                }
+            }
             let (supervisor, announce) = server::Supervisor::start()?;
             tracing::info!(endpoint = %announce.graphql, "overhear-server に接続する");
             let handle = app.handle();
