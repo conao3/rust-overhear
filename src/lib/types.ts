@@ -24,6 +24,8 @@ export type Segment = {
   audioUrl: string;
   tokens: Token[];
   translations: Translation[];
+  /** 直近の翻訳が失敗した理由。訳が付けば消える。 */
+  translationError: string | null;
 };
 
 export type TranslationEngineInfo = {

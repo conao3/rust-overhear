@@ -44,6 +44,8 @@ pub struct Segment {
     pub tokens: Vec<Token>,
     /// エンジンごとに 0..n 件。retranslate は上書きではなく追加。
     pub translations: Vec<Translation>,
+    /// 直近の翻訳が失敗した理由。訳が付けば消える。
+    pub translation_error: Option<String>,
     pub asr_engine: String,
     /// 音声の実体。GraphQL にバイナリは載せない。
     pub audio_url: String,
@@ -112,6 +114,7 @@ impl From<core::Segment> for Segment {
             source_text: s.source_text,
             tokens: s.tokens.into_iter().map(Token::from).collect(),
             translations: s.translations.into_iter().map(Translation::from).collect(),
+            translation_error: s.translation_error,
             asr_engine: s.asr_engine,
         }
     }

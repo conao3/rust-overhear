@@ -343,7 +343,15 @@ impl Overhear {
     }
 
     /// segment の翻訳を待ち行列に積む。結果は subscription で届く。
+    ///
+    /// 前回の失敗の理由は消して配信する。画面はそれを見て「翻訳中」に戻る。
     pub fn request_translation(&self, id: SegmentId) {
+        if let Some(mut segment) = self.segment(id) {
+            if segment.translation_error.take().is_some() {
+                self.upsert(segment.clone());
+                let _ = self.updates.send(segment);
+            }
+        }
         self.translate_queue.push(id);
     }
 
@@ -441,6 +449,10 @@ impl Overhear {
             }
             self.last_pause_translated
                 .store(latest.id, Ordering::Relaxed);
+            // 「翻訳しない」を選んでいるときは積まない。
+            if self.translators.default_id() == "none" {
+                continue;
+            }
             self.translate_queue.push(latest.id);
         }
     }
@@ -776,13 +788,22 @@ impl Overhear {
             source_lang: None,
             target_lang: self.target_lang(),
         };
-        let translation = self.translators.translate(engine_id, &req).await?;
-        if translation.text.is_empty() {
-            return Some(segment);
-        }
+        let result = match self.translators.translate(engine_id, &req).await {
+            Ok(translation) if translation.text.is_empty() => {
+                Err(format!("{} は訳文を返さなかった", translation.engine_id))
+            }
+            other => other,
+        };
 
+        // 失敗も行の更新として配信する。画面は「翻訳中」のまま待たない。
         let mut updated = self.segment(id)?;
-        updated.translations.push(translation);
+        match result {
+            Ok(translation) => {
+                updated.translations.push(translation);
+                updated.translation_error = None;
+            }
+            Err(reason) => updated.translation_error = Some(reason),
+        }
         self.upsert(updated.clone());
         let _ = self.updates.send(updated.clone());
         Some(updated)
@@ -1013,6 +1034,7 @@ impl SegmentBuilder {
                 .filter(|c| c.id == self.next_id)
                 .map(|c| c.translations.clone())
                 .unwrap_or_default(),
+            translation_error: None,
             asr_engine: self.asr_engine.to_string(),
         }
     }

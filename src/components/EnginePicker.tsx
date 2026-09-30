@@ -33,9 +33,11 @@ export function EnginePicker({ engines, selected, onChange }: Props) {
       onSelectionChange={(key) => onChange(String(key))}
       className="flex items-center gap-2"
     >
-      <Label className="text-xs text-ink-muted">翻訳エンジン</Label>
-      <Button className="rounded bg-white/10 px-2 py-1 text-sm outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/15">
-        <SelectValue />
+      <Label className="text-xs whitespace-nowrap text-ink-muted">
+        翻訳エンジン
+      </Label>
+      <Button className="rounded bg-white/10 px-2 py-1 text-sm whitespace-nowrap outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/15">
+        <SelectValue>{({ selectedText }) => selectedText}</SelectValue>
       </Button>
       <Popover className="rounded-lg border border-white/10 bg-surface-raised p-1 shadow-xl">
         <ListBox className="outline-none">

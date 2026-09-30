@@ -42,6 +42,8 @@ pub struct Segment {
     pub tokens: Vec<Token>,
     /// エンジンごとに 0..n 件。retranslate は上書きではなく追加。
     pub translations: Vec<Translation>,
+    /// 直近の翻訳が失敗した理由。訳が付けば消える。
+    pub translation_error: Option<String>,
     pub asr_engine: String,
 }
 

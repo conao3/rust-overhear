@@ -25,7 +25,9 @@ export function useTranslationRequests() {
 
   const isPending = useCallback(
     (segment: Segment) =>
-      requested.has(segment.id) && segment.translations.length === 0,
+      requested.has(segment.id) &&
+      segment.translations.length === 0 &&
+      segment.translationError === null,
     [requested],
   );
 

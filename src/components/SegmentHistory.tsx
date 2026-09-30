@@ -16,6 +16,7 @@ type Props = {
   onTranslate: (segment: Segment) => void;
   onRetranslate: (segment: Segment) => void;
   isTranslating: (segment: Segment) => boolean;
+  canTranslate: boolean;
 };
 
 export function SegmentHistory({
@@ -24,11 +25,13 @@ export function SegmentHistory({
   onTranslate,
   onRetranslate,
   isTranslating,
+  canTranslate,
 }: Props) {
   return (
     <GridList
       aria-label="発話の履歴"
       items={segments}
+      dependencies={[canTranslate, isTranslating]}
       className="flex flex-col gap-2 outline-none"
       renderEmptyState={() => (
         <div className="py-8 text-center text-sm text-ink-muted">
@@ -57,6 +60,11 @@ export function SegmentHistory({
                   {t.text}
                 </p>
               ))}
+              {segment.translationError && (
+                <p className="mt-1 text-xs text-amber-300">
+                  翻訳できなかった ({segment.translationError})
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 gap-1">
               <Button
@@ -65,21 +73,23 @@ export function SegmentHistory({
               >
                 再生
               </Button>
-              <Button
-                isDisabled={isTranslating(segment)}
-                className="rounded bg-white/10 px-2 py-1 text-xs outline-none data-[disabled]:opacity-50 data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/20"
-                onPress={() =>
-                  segment.translations.length > 0
-                    ? onRetranslate(segment)
-                    : onTranslate(segment)
-                }
-              >
-                {isTranslating(segment)
-                  ? "翻訳中…"
-                  : segment.translations.length > 0
-                    ? "訳し直す"
-                    : "訳す"}
-              </Button>
+              {canTranslate && (
+                <Button
+                  isDisabled={isTranslating(segment)}
+                  className="rounded bg-white/10 px-2 py-1 text-xs outline-none data-[disabled]:opacity-50 data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/20"
+                  onPress={() =>
+                    segment.translations.length > 0
+                      ? onRetranslate(segment)
+                      : onTranslate(segment)
+                  }
+                >
+                  {isTranslating(segment)
+                    ? "翻訳中…"
+                    : segment.translations.length > 0
+                      ? "訳し直す"
+                      : "訳す"}
+                </Button>
+              )}
             </div>
           </div>
         </GridListItem>

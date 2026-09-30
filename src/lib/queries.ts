@@ -21,6 +21,7 @@ export const SEGMENT_FIELDS = gql`
       targetLang
       fallbackFrom
     }
+    translationError
   }
 `;
 

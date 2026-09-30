@@ -172,17 +172,19 @@ impl TranslatorRegistry {
 
     /// 指定エンジンで翻訳し、失敗したら既定エンジンへフォールバックする。
     /// フォールバックしたことは Translation::fallback_from に残す。
+    ///
+    /// 翻訳できなかったときは理由を返す (字幕そのものは止めない)。
     pub async fn translate(
         &self,
         engine_id: Option<&str>,
         req: &TranslateRequest,
-    ) -> Option<Translation> {
+    ) -> Result<Translation, String> {
         let default_id = self.default_id();
         let wanted = engine_id.unwrap_or(&default_id);
-        if let Some(engine) = self.get(wanted) {
-            match engine.translate(req).await {
+        let first_error = match self.get(wanted) {
+            Some(engine) => match engine.translate(req).await {
                 Ok(text) => {
-                    return Some(Translation {
+                    return Ok(Translation {
                         engine_id: engine.id().to_string(),
                         text,
                         target_lang: req.target_lang.clone(),
@@ -191,25 +193,28 @@ impl TranslatorRegistry {
                 }
                 Err(err) => {
                     tracing::warn!(engine = wanted, %err, "翻訳に失敗したのでフォールバックする");
+                    format!("{wanted}: {err}")
                 }
-            }
-        }
+            },
+            None => format!("翻訳エンジン {wanted} は登録されていない"),
+        };
 
         if wanted == default_id {
-            return None;
+            return Err(first_error);
         }
-        let fallback = self.get(&default_id)?;
+        let fallback = self
+            .get(&default_id)
+            .ok_or_else(|| format!("{first_error} / 既定エンジン {default_id} が無い"))?;
         match fallback.translate(req).await {
-            Ok(text) => Some(Translation {
+            Ok(text) => Ok(Translation {
                 engine_id: fallback.id().to_string(),
                 text,
                 target_lang: req.target_lang.clone(),
                 fallback_from: Some(wanted.to_string()),
             }),
             Err(err) => {
-                // 翻訳は落とすが字幕そのものは止めない。
                 tracing::warn!(%err, "フォールバック先の翻訳も失敗した");
-                None
+                Err(format!("{first_error} / {default_id}: {err}"))
             }
         }
     }

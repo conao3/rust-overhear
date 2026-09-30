@@ -6,18 +6,28 @@
  */
 import { useQuery, useSubscription } from "@apollo/client/react";
 import { useMemo } from "react";
-import { Button } from "react-aria-components";
 
+import { TranslateAction } from "./components/TranslateAction";
 import { WordPopover } from "./components/WordPopover";
-import { SEGMENTS, SEGMENT_UPDATES } from "./lib/queries";
+import { SEGMENTS, SEGMENT_UPDATES, TRANSLATION_ENGINES } from "./lib/queries";
 import { displayText, displayWords } from "./lib/casing";
 import { useTranslationRequests } from "./lib/translation";
-import type { Segment } from "./lib/types";
+import type { Segment, TranslationEngineInfo } from "./lib/types";
 
 const RECENT_LIMIT = 2;
 
 export function CaptionWindow() {
   const translationRequests = useTranslationRequests();
+  const { data: engineData } = useQuery<{
+    translationEngines: TranslationEngineInfo[];
+  }>(TRANSLATION_ENGINES, {
+    // スタジオで切り替えた既定エンジンは別ウィンドウのキャッシュに入らない。
+    pollInterval: 10_000,
+  });
+  const defaultEngine = engineData?.translationEngines.find(
+    (e) => e.isDefault,
+  )?.id;
+  const canTranslate = defaultEngine !== undefined && defaultEngine !== "none";
   const { data } = useQuery<{ segments: Segment[] }>(SEGMENTS, {
     variables: { limit: RECENT_LIMIT },
   });
@@ -81,17 +91,12 @@ export function CaptionWindow() {
                 {translation.text}
               </p>
             ) : (
-              current.status === "FINAL" &&
-              (translationRequests.isPending(current) ? (
-                <p className="text-sm text-ink-muted/60">翻訳中…</p>
-              ) : (
-                <Button
-                  className="rounded px-2 text-sm text-ink-muted/70 outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/10"
-                  onPress={() => translationRequests.request(current)}
-                >
-                  訳す
-                </Button>
-              ))
+              <TranslateAction
+                segment={current}
+                translating={translationRequests.isPending(current)}
+                canTranslate={canTranslate}
+                onTranslate={translationRequests.request}
+              />
             )}
           </>
         ) : (

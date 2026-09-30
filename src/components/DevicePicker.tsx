@@ -33,7 +33,7 @@ export function DevicePicker({ devices, selected, onChange }: Props) {
       }
       className="flex items-center gap-2"
     >
-      <Label className="text-xs text-ink-muted">音源</Label>
+      <Label className="text-xs whitespace-nowrap text-ink-muted">音源</Label>
       <Button className="max-w-64 truncate rounded bg-white/10 px-2 py-1 text-sm outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/15">
         <SelectValue />
       </Button>

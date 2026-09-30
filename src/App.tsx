@@ -97,6 +97,7 @@ export function App() {
   const latest = segments.at(-1) ?? null;
   const engines = engineData?.translationEngines ?? [];
   const engineId = engines.find((e) => e.isDefault)?.id ?? null;
+  const canTranslate = engineId !== null && engineId !== "none";
 
   const play = useCallback(
     async (url: string, durationMs: number) => {
@@ -173,8 +174,8 @@ export function App() {
 
   return (
     <div className="mx-auto flex h-full max-w-4xl flex-col gap-4 p-6">
-      <header className="flex items-center justify-between gap-4">
-        <div>
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">overhear</h1>
           {captureState && (
             <p className="text-xs text-ink-muted">
@@ -220,6 +221,7 @@ export function App() {
         savingWord={savingWord}
         onTranslate={translation.request}
         translating={latest ? translation.isPending(latest) : false}
+        canTranslate={canTranslate}
       />
 
       {playError && (
@@ -256,6 +258,7 @@ export function App() {
             }
             onTranslate={translation.request}
             isTranslating={translation.isPending}
+            canTranslate={canTranslate}
             onRetranslate={(segment) => {
               void retranslate({
                 variables: { segmentId: segment.id, engineId },

@@ -2,11 +2,10 @@
  * 常時最前面のキャプションバー相当の表示。
  * 原文 (語ごとにクリック可能) と訳を出す。
  */
-import { Button } from "react-aria-components";
-
 import { displayText, displayWords } from "../lib/casing";
 import { formatMs } from "../lib/config";
 import type { Segment } from "../lib/types";
+import { TranslateAction } from "./TranslateAction";
 import { WordPopover } from "./WordPopover";
 
 type Props = {
@@ -15,6 +14,7 @@ type Props = {
   savingWord?: boolean;
   onTranslate: (segment: Segment) => void;
   translating: boolean;
+  canTranslate: boolean;
 };
 
 export function CaptionBar({
@@ -23,6 +23,7 @@ export function CaptionBar({
   savingWord,
   onTranslate,
   translating,
+  canTranslate,
 }: Props) {
   if (!segment) {
     return (
@@ -78,17 +79,13 @@ export function CaptionBar({
           )}
         </p>
       ) : (
-        segment.status === "FINAL" &&
-        (translating ? (
-          <p className="mt-3 text-sm text-ink-muted/60">翻訳中…</p>
-        ) : (
-          <Button
-            className="mt-3 rounded bg-white/10 px-2 py-1 text-sm text-ink-muted outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/20"
-            onPress={() => onTranslate(segment)}
-          >
-            訳す
-          </Button>
-        ))
+        <TranslateAction
+          segment={segment}
+          translating={translating}
+          canTranslate={canTranslate}
+          onTranslate={onTranslate}
+          className="mt-3"
+        />
       )}
     </div>
   );
