@@ -14,12 +14,20 @@ import type { DictEntry, Token } from "../lib/types";
 
 type Props = {
   token: Token;
+  /** 表示する語。大文字・小文字を整えたもの。辞書は `token.surface` で引く。 */
+  label: string;
   segmentId: string;
   onSave?: (segmentId: string, tokenIndex: number) => void;
   saving?: boolean;
 };
 
-export function WordPopover({ token, segmentId, onSave, saving }: Props) {
+export function WordPopover({
+  token,
+  label,
+  segmentId,
+  onSave,
+  saving,
+}: Props) {
   const [isOpen, setOpen] = useState(false);
   const { data, loading } = useQuery<{ lookup: DictEntry[] }>(LOOKUP, {
     variables: { word: token.surface },
@@ -32,14 +40,14 @@ export function WordPopover({ token, segmentId, onSave, saving }: Props) {
     <DialogTrigger isOpen={isOpen} onOpenChange={setOpen}>
       <Button
         className="rounded px-0.5 outline-none transition-colors data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-accent/25 data-[pressed]:bg-accent/40"
-        aria-label={`${token.surface} を調べる`}
+        aria-label={`${label} を調べる`}
       >
-        {token.surface}
+        {label}
       </Button>
       <Popover className="max-w-md rounded-lg border border-white/10 bg-surface-raised p-4 shadow-xl">
         <Dialog className="outline-none">
           <div className="flex items-baseline justify-between gap-3">
-            <span className="text-lg font-semibold">{token.surface}</span>
+            <span className="text-lg font-semibold">{label}</span>
             {onSave && (
               <Button
                 isDisabled={saving}

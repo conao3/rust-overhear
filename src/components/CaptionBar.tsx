@@ -4,6 +4,7 @@
  */
 import { Button } from "react-aria-components";
 
+import { displayText, displayWords } from "../lib/casing";
 import { formatMs } from "../lib/config";
 import type { Segment } from "../lib/types";
 import { WordPopover } from "./WordPopover";
@@ -32,6 +33,7 @@ export function CaptionBar({
   }
 
   const translation = segment.translations.at(-1);
+  const words = displayWords(segment);
 
   return (
     <div className="rounded-xl bg-surface-raised/70 p-5 shadow-lg ring-1 ring-white/5">
@@ -51,17 +53,18 @@ export function CaptionBar({
 
       <p className="text-2xl leading-relaxed font-medium">
         {segment.tokens.length > 0
-          ? segment.tokens.map((token) => (
+          ? segment.tokens.map((token, i) => (
               <span key={token.index}>
                 <WordPopover
                   token={token}
+                  label={words[i]}
                   segmentId={segment.id}
                   onSave={onSaveWord}
                   saving={savingWord}
                 />{" "}
               </span>
             ))
-          : segment.sourceText}
+          : displayText(segment)}
       </p>
 
       {translation ? (

@@ -14,6 +14,8 @@
 
 april-asr が interim を即座に出し、文が閉じたらリングバッファの該当区間を whisper.cpp に投げて確定文へ差し替える。差し替えは **同じ id の segment の更新**として GraphQL subscription に流れるので、フロントは Apollo の正規化キャッシュで受けるだけでよい。
 
+april の出力は全部大文字なので、whisper で差し替わる前の行 (と whisper に掛けない短い行・古い行) は表示だけ小文字にし、文頭と一人称の I を大文字にする。固有名詞は小文字のままになる。辞書は元の語で引く。
+
 ### 3. 翻訳も ASR も辞書もストラテジーパターン
 
 既定はローカル (Ollama)。DeepL / Google は必要に応じて選ぶ。`Translator` トレイトは `sends_data_externally` をケイパビリティとして表明するため、UI はローカルと外部送信を分けて見せられる。辞書 (`Dictionary`) と音声認識 (`Recognizer`) も同じ形にしてある。

@@ -10,6 +10,7 @@ import { Button } from "react-aria-components";
 
 import { WordPopover } from "./components/WordPopover";
 import { SEGMENTS, SEGMENT_UPDATES } from "./lib/queries";
+import { displayText, displayWords } from "./lib/casing";
 import { useTranslationRequests } from "./lib/translation";
 import type { Segment } from "./lib/types";
 
@@ -56,7 +57,7 @@ export function CaptionWindow() {
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 pb-4 text-center">
         {previous && (
           <p className="max-w-full truncate text-sm text-ink-muted/50">
-            {previous.sourceText}
+            {displayText(previous)}
           </p>
         )}
 
@@ -64,12 +65,16 @@ export function CaptionWindow() {
           <>
             <p className="max-w-full text-2xl leading-snug font-medium text-balance">
               {current.tokens.length > 0
-                ? current.tokens.map((token) => (
-                    <span key={token.index}>
-                      <WordPopover token={token} segmentId={current.id} />{" "}
+                ? displayWords(current).map((label, i) => (
+                    <span key={current.tokens[i].index}>
+                      <WordPopover
+                        token={current.tokens[i]}
+                        label={label}
+                        segmentId={current.id}
+                      />{" "}
                     </span>
                   ))
-                : current.sourceText}
+                : displayText(current)}
             </p>
             {translation ? (
               <p className="max-w-full truncate text-base text-ink-muted">
