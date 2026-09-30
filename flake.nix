@@ -20,7 +20,7 @@
             final: prev:
             let
               nodejs = prev.nodejs_24;
-              pnpm = prev.pnpm_10.override { inherit nodejs; };
+              pnpm = prev.pnpm_10.override { nodejs-slim = prev.nodejs-slim_24; };
               rustToolchain = prev.rust-bin.stable.latest.default;
 
               # april-asr の学習済みモデル。livecaptions の overlay
@@ -93,8 +93,9 @@
             # 見に行って真っ白になる。
             buildFeatures = [ "overhear/custom-protocol" ];
 
-            pnpmDeps = pkgs.pnpm.fetchDeps {
+            pnpmDeps = pkgs.fetchPnpmDeps {
               inherit (finalAttrs) pname version src;
+              inherit (pkgs) pnpm;
               fetcherVersion = 4;
               hash = "sha256-2CboHElg+2hEWtnrNVOZqEkW0P+/t2ZTLLMleFPENUA=";
             };
@@ -102,7 +103,8 @@
             nativeBuildInputs = with pkgs; [
               pkg-config
               nodejs
-              pnpm.configHook
+              pnpm
+              pnpmConfigHook
               wrapGAppsHook3
               makeWrapper
             ];

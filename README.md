@@ -85,10 +85,24 @@ whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入ってお�
 
 ## 入れる
 
+前提は x86_64-linux・PipeWire・flakes が有効な Nix (`experimental-features = nix-command flakes`)。
+
 ```sh
 nix run github:conao3/rust-overhear        # そのまま起動
 nix profile install github:conao3/rust-overhear
 ```
+
+NixOS / home-manager では flake の入力に足して `packages.default` を入れる。
+
+```nix
+# flake.nix
+inputs.overhear.url = "github:conao3/rust-overhear";
+
+# home-manager のモジュール
+home.packages = [ inputs.overhear.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+```
+
+初回はモデル (april 321MB、whisper 142MB) の取得とビルドで数分かかる。翻訳を使うなら別に Ollama を動かしてモデルを pull しておく (home-manager なら `services.ollama.enable = true;` と `ollama pull qwen3:8b`)。DeepL / Google の API キーを設定タブから保存するには Secret Service (gnome-keyring 等) が要る。
 
 `packages.default` はフロント (pnpm) と Rust をまとめてビルドし、april-asr のモデル・whisper のモデル・WordNet・英和辞書のパスと、子プロセスとして使う `pw-record` / `whisper-server` を実行ファイルに焼き込む。devShell の外でもそのまま動く。desktop entry とアイコンも入るのでメニューから起動できる。
 
