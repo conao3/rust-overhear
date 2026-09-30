@@ -2,8 +2,7 @@
 //!
 //! `$XDG_RUNTIME_DIR/overhear.lock` を flock で掴めたほうが本体になり、
 //! `overhear.sock` で待ち受ける。掴めなかった 2 つ目はソケットへ知らせて終わり、
-//! 本体がスタジオを前に出す。D-Bus (zbus) で待ち受ける方式は、起動時に GTK の
-//! メインスレッドを止めてウィンドウが描画されなくなるので使わない。
+//! 本体がスタジオを前に出す。
 
 use std::fs::File;
 use std::io::Write;

@@ -82,11 +82,19 @@ fn save_window_state_on_change(window: &WebviewWindow) {
         let app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(500));
-            if generation.load(Ordering::Relaxed) == mine {
-                if let Err(err) = app.save_window_state(window_state_flags()) {
+            if generation.load(Ordering::Relaxed) != mine {
+                return;
+            }
+            // 保存はメインスレッドで行う。プラグインはキャッシュのロックを
+            // 握ったままウィンドウの状態を読み、別スレッドからだとその読み取りが
+            // メインスレッド待ちになる。メインスレッドは移動の処理で同じロックを
+            // 待つので、互いに待ち合って画面が止まる。
+            let main_app = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Err(err) = main_app.save_window_state(window_state_flags()) {
                     tracing::warn!(%err, "ウィンドウの位置を保存できなかった");
                 }
-            }
+            });
         });
     });
 }
