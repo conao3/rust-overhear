@@ -59,7 +59,7 @@ PipeWire monitor
 
 `overhear-server` が落ちたら、Tauri が起動し直す。ポートとトークンは起動ごとに変わるので、新しい接続情報を各ウィンドウの `sessionStorage` に入れてページを読み込み直す (初期化スクリプトは `sessionStorage` の値を優先して `window.__OVERHEAR__` にする)。60 秒に 5 回落ちたら起動し直すのをやめる。
 
-2 つ目を起動すると、そちらはすぐ終わり、動いているほうのスタジオが前に出る (`tauri-plugin-single-instance`)。ホットキーを他のアプリが使っていて登録できないときは、警告を出して起動を続ける (トレイからは操作できる)。
+2 つ目を起動すると、そちらはすぐ終わり、動いているほうのスタジオが前に出る。`$XDG_RUNTIME_DIR/overhear.lock` を flock で掴めたほうが本体になり、`overhear.sock` で 2 つ目からの知らせを受ける。ホットキーを他のアプリが使っていて登録できないときは、警告を出して起動を続ける (トレイからは操作できる)。
 
 トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動では `--autostart` が付き、スタジオを出さずに字幕バーとトレイだけで始まる。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
 

@@ -11,6 +11,7 @@
 
 mod autostart;
 mod server;
+mod single_instance;
 
 use anyhow::{Context, Result};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
@@ -190,15 +191,24 @@ pub fn run() {
     let caption_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyO);
     let studio_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS);
 
+    // 2 つ目を起動したら、そちらは終わって既に動いているほうのスタジオを出す。
+    let listener = match single_instance::acquire() {
+        Ok(single_instance::Instance::Secondary) => {
+            tracing::info!("overhear は既に動いているので、そちらのスタジオを出して終わる");
+            return;
+        }
+        Ok(single_instance::Instance::Primary { lock, listener }) => {
+            // ロックはプロセスが終わるまで持つ。
+            std::mem::forget(lock);
+            Some(listener)
+        }
+        Err(err) => {
+            tracing::warn!(%err, "二重起動の確認ができないので、確認せずに起動する");
+            None
+        }
+    };
+
     tauri::Builder::default()
-        // 2 つ目を起動したら、そちらは終わって既に動いているほうのスタジオを出す。
-        // 先に登録しないと、2 つ目が他のプラグインを初期化してしまう。
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }))
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
@@ -223,6 +233,15 @@ pub fn run() {
         )
         .setup(move |app| {
             let from_autostart = std::env::args().any(|a| a == autostart::AUTOSTART_ARG);
+            if let Some(listener) = listener {
+                let show_handle = app.handle().clone();
+                single_instance::serve(listener, move || {
+                    if let Some(window) = show_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                });
+            }
             // 他のアプリが同じキーを使っていても起動は続ける。トレイからは操作できる。
             for shortcut in [caption_shortcut, studio_shortcut] {
                 if let Err(err) = app.global_shortcut().register(shortcut) {
