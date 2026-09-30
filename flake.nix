@@ -134,6 +134,8 @@
             postInstall = ''
               # overhear-server は overhear の子として環境を継承するが、
               # 単体でも起動できるよう同じものを包んでおく。
+              # WebKitGTK の DMA-BUF レンダラは Intel + X11 等で何も描画しない
+              # (ウィンドウが真っ白になる) ことがあるので、既定で切る。
               for bin in overhear overhear-server; do
                 # argv0 を保たないと WM class が .overhear-wrapped になり、
                 # desktop entry の StartupWMClass と噛み合わない。
@@ -144,6 +146,7 @@
                   --set WORDNET_DICT_DIR "${pkgs.wordnet}/dict" \
                   --set EJDICT_PATH "${pkgs.ejdict}/ejdict-hand-utf8.txt" \
                   --set OVERHEAR_AUTOSTART_EXEC overhear \
+                  --set-default WEBKIT_DISABLE_DMABUF_RENDERER 1 \
                   --prefix LD_LIBRARY_PATH : "${pkgs.libayatana-appindicator}/lib" \
                   --prefix PATH : "${
                     pkgs.lib.makeBinPath [

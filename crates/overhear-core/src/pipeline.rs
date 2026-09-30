@@ -13,7 +13,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::anki::{AnkiConnect, AnkiNote, DEFAULT_DECK, DEFAULT_MODEL};
 use crate::asr::whisper::WhisperRefiner;
-use crate::asr::{AsrEvent, AsrToken, Recognizer};
+use crate::asr::{AsrEvent, AsrToken, Fed, Recognizer};
 use crate::audio::{self, CaptureConfig, CaptureHandle};
 use crate::devices::{self, AudioDevice, DeviceKind};
 use crate::dict::{DictEntry, DictionaryRegistry, normalize_surface};
@@ -34,6 +34,14 @@ const MIN_REFINE_MS: u64 = 600;
 /// キャプチャが止まってから起動し直すまでの待ち。失敗が続くと倍々に延ばす。
 const CAPTURE_RETRY_MIN: Duration = Duration::from_secs(1);
 const CAPTURE_RETRY_MAX: Duration = Duration::from_secs(30);
+
+/// 途中経過を配信する最短の間隔。april は毎秒 10〜15 回更新するが、
+/// 字幕を読む目にはこれで足り、WebView の再描画とサーバの CPU が減る。
+const INTERIM_MIN_INTERVAL: Duration = Duration::from_millis(200);
+
+/// これより古い台詞は whisper に掛けない。CPU が詰まって差し替えが遅れても、
+/// 画面から流れた台詞のために CPU を使い続けない。
+const REFINE_MAX_AGE_MS: u64 = 30_000;
 
 /// 台詞がこれだけ途切れたら、最新の台詞を訳す。
 /// 動画を止めたときに、いま画面にある台詞の訳が出る。
@@ -122,6 +130,8 @@ pub struct Overhear {
     refining: AtomicBool,
     /// 最後に ASR が segment を出した時刻。台詞の途切れを測る。
     last_speech: Mutex<Instant>,
+    /// 最後に途中経過を配信した時刻。
+    last_interim_sent: Mutex<Option<Instant>>,
     /// 途切れで最後に訳へ回した segment。同じ台詞を二度積まない。
     last_pause_translated: AtomicU64,
     /// この時刻までは入力を無音として扱う。聞き直しの再生音を
@@ -190,7 +200,7 @@ impl Overhear {
             let gate_enabled = config.silence_threshold > 0;
 
             tokio::task::spawn_blocking(move || {
-                let mut fed: u64 = 0;
+                let mut counters = FeedCounters::default();
                 while let Some(chunk) = audio_rx.blocking_recv() {
                     // リングバッファには常に入れる。聞き直しは無音区間も
                     // 含めて成立している必要がある。
@@ -204,37 +214,25 @@ impl Overhear {
                         .and_then(|g| *g)
                         .is_some_and(|until| Instant::now() < until);
 
-                    if !gate_enabled {
-                        // ゲート無効時も、ミュート中は無音を送って時計を進める。
-                        let data = if muted {
-                            vec![0i16; chunk.len()]
-                        } else {
-                            chunk
-                        };
-                        if let Err(err) = recognizer.feed(&data) {
-                            tracing::warn!(?err, "ASR への供給に失敗した");
-                            break;
-                        }
-                        continue;
-                    }
-
                     // 静かな区間とミュート中は ASR を動かさない。ここが
-                    // 待機時の CPU をほぼゼロにする。
-                    let mut failed = false;
-                    let pieces = gate.admit(&chunk, muted);
-                    // この admit で流すものは、ここまでの飛ばし量の時間軸に乗る。
-                    if let Ok(mut clock) = clock.lock() {
-                        clock.record(fed, gate.skipped_samples());
-                    }
-                    for piece in pieces {
-                        if let Err(err) = recognizer.feed(&piece) {
-                            tracing::warn!(?err, "ASR への供給に失敗した");
-                            failed = true;
-                            break;
-                        }
-                        fed += piece.len() as u64;
-                    }
-                    if failed {
+                    // 待機時の CPU をほぼゼロにする。ゲート無効時も、ミュート中は
+                    // 無音を送って時計を進める。
+                    let pieces = if gate_enabled {
+                        gate.admit(&chunk, muted)
+                    } else if muted {
+                        vec![vec![0i16; chunk.len()]]
+                    } else {
+                        vec![chunk]
+                    };
+                    let Ok(mut clock) = clock.lock() else { break };
+                    if let Err(err) = feed_pieces(
+                        recognizer.as_mut(),
+                        pieces,
+                        gate.skipped_samples(),
+                        &mut counters,
+                        &mut clock,
+                    ) {
+                        tracing::warn!(?err, "ASR への供給に失敗した");
                         break;
                     }
                 }
@@ -260,6 +258,7 @@ impl Overhear {
             translate_queue: WorkQueue::default(),
             refining: AtomicBool::new(false),
             last_speech: Mutex::new(Instant::now()),
+            last_interim_sent: Mutex::new(None),
             last_pause_translated: AtomicU64::new(0),
             mute_until,
             capture: Mutex::new(Some(capture)),
@@ -319,11 +318,28 @@ impl Overhear {
             *last = Instant::now();
         }
         self.upsert(segment.clone());
+        if !is_final && !self.interim_due() {
+            // 履歴には入れておき、配信だけ間引く。確定は必ず配信する。
+            return;
+        }
         let _ = self.updates.send(segment.clone());
 
         if is_final && !segment.source_text.is_empty() && self.whisper.is_some() {
             self.refine_queue.push(segment.id);
         }
+    }
+
+    /// 途中経過を配信してよいか。よければ配信時刻を更新する。
+    fn interim_due(&self) -> bool {
+        let Ok(mut last) = self.last_interim_sent.lock() else {
+            return true;
+        };
+        let now = Instant::now();
+        if last.is_some_and(|t| now.duration_since(t) < INTERIM_MIN_INTERVAL) {
+            return false;
+        }
+        *last = Some(now);
+        true
     }
 
     /// segment の翻訳を待ち行列に積む。結果は subscription で届く。
@@ -602,6 +618,10 @@ impl Overhear {
         if segment.duration_ms() < MIN_REFINE_MS {
             return None; // 短すぎる区間は掛けるだけ無駄
         }
+        let now_ms = self.ring.lock().ok()?.total_ms();
+        if segment.end_ms + REFINE_MAX_AGE_MS < now_ms {
+            return None; // 画面から流れた台詞
+        }
 
         let (start_ms, end_ms) = self.refine_span(&segment);
         let audio = {
@@ -767,6 +787,39 @@ impl Overhear {
         let _ = self.updates.send(updated.clone());
         Some(updated)
     }
+}
+
+/// ASR に供給した量と、ASR が捨てた量。
+#[derive(Debug, Default)]
+struct FeedCounters {
+    /// ASR が受け取ったサンプル数。ASR の時計はこれで進む。
+    fed: u64,
+    /// ASR が処理に追いつけず捨てたサンプル数。
+    dropped: u64,
+}
+
+/// ゲートを通った音声を ASR へ流し、時計の対応を記録する。
+///
+/// `skipped` はゲートが飛ばした累積量。ASR が捨てた音声も ASR の時計を
+/// 進めないので、飛ばしたのと同じに数えて以降のトークンを後ろへ戻す。
+fn feed_pieces(
+    recognizer: &mut dyn Recognizer,
+    pieces: Vec<Vec<i16>>,
+    skipped: u64,
+    counters: &mut FeedCounters,
+    clock: &mut ClockMap,
+) -> Result<()> {
+    clock.record(counters.fed, skipped + counters.dropped);
+    for piece in pieces {
+        match recognizer.feed(&piece)? {
+            Fed::Accepted => counters.fed += piece.len() as u64,
+            Fed::Dropped => {
+                counters.dropped += piece.len() as u64;
+                clock.record(counters.fed, skipped + counters.dropped);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 拾う先を決める。`None` で既定シンク。
@@ -1075,5 +1128,52 @@ mod newest_first_tests {
         assert_eq!(queue.pop_newest(), Some(2));
         assert_eq!(queue.pop_newest(), Some(1));
         assert_eq!(queue.pop_newest(), None);
+    }
+}
+
+#[cfg(test)]
+mod feed_tests {
+    use super::*;
+
+    /// 3 回に 1 回、音声を捨てる ASR。
+    struct Flaky {
+        calls: usize,
+    }
+
+    impl Recognizer for Flaky {
+        fn id(&self) -> &'static str {
+            "flaky"
+        }
+        fn sample_rate(&self) -> u32 {
+            16_000
+        }
+        fn feed(&mut self, _pcm: &[i16]) -> Result<Fed> {
+            self.calls += 1;
+            Ok(if self.calls % 3 == 0 {
+                Fed::Dropped
+            } else {
+                Fed::Accepted
+            })
+        }
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dropped_audio_shifts_later_tokens_back() {
+        let mut asr = Flaky { calls: 0 };
+        let mut counters = FeedCounters::default();
+        let mut clock = ClockMap::default();
+        // 100ms (1600 サンプル) ずつ 6 回。3 回目と 6 回目が捨てられる。
+        for _ in 0..6 {
+            feed_pieces(&mut asr, vec![vec![0; 1600]], 0, &mut counters, &mut clock).unwrap();
+        }
+        assert_eq!(counters.fed, 1600 * 4);
+        assert_eq!(counters.dropped, 1600 * 2);
+        // ASR の時計で 150ms は、捨てる前なので絶対時間でも 150ms。
+        assert_eq!(clock.to_absolute_ms(150, 16_000), 150);
+        // ASR の時計で 250ms は 4 回目の音声 (絶対 300〜400ms) の中にある。
+        assert_eq!(clock.to_absolute_ms(250, 16_000), 350);
     }
 }

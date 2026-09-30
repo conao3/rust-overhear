@@ -12,7 +12,7 @@ use std::sync::Once;
 use anyhow::{Context, Result, anyhow};
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::{AsrEvent, AsrToken, Recognizer, tokens_to_text};
+use super::{AsrEvent, AsrToken, Fed, Recognizer, tokens_to_text};
 
 const APRIL_VERSION: c_int = 1;
 
@@ -24,8 +24,12 @@ const RESULT_SILENCE: c_int = 4;
 const TOKEN_FLAG_WORD_BOUNDARY: c_int = 0x0000_0001;
 const TOKEN_FLAG_SENTENCE_END: c_int = 0x0000_0002;
 
-/// 実時間で供給し、処理はバックグラウンドスレッドへ委ねる。
-const CONFIG_FLAG_ASYNC_RT: c_int = 0x0000_0001;
+/// 処理はバックグラウンドスレッドへ委ね、追いつけなくても音声を早回ししない。
+///
+/// `ASYNC_RT` (0x1) は遅れると音声を sonic で早回しし、トークンの時刻が
+/// 早回し後の長さでしか進まなくなる。CPU が詰まるたびに時刻が実際より遅れて
+/// 戻らず、長く動かすほど whisper に渡す区間がずれていく。
+const CONFIG_FLAG_ASYNC_NO_RT: c_int = 0x0000_0002;
 
 /// april がトークンに付ける時刻の、実際の発話からの遅れ。
 ///
@@ -74,6 +78,8 @@ static API_INIT: Once = Once::new();
 
 struct Userdata {
     tx: UnboundedSender<AsrEvent>,
+    /// 直前の供給を april が捨てたか。`aas_feed_pcm16` の中から同期で立つ。
+    dropped: std::sync::atomic::AtomicBool,
 }
 
 /// april-asr のバックグラウンドスレッドから呼ばれる。
@@ -91,7 +97,10 @@ extern "C" fn on_result(
 
     let event = match result {
         RESULT_SILENCE => AsrEvent::Silence,
-        RESULT_ERROR_CANT_KEEP_UP => AsrEvent::CantKeepUp,
+        RESULT_ERROR_CANT_KEEP_UP => {
+            ud.dropped.store(true, std::sync::atomic::Ordering::Relaxed);
+            AsrEvent::CantKeepUp
+        }
         RESULT_RECOGNITION_PARTIAL | RESULT_RECOGNITION_FINAL => {
             let parsed = unsafe { collect_tokens(count, tokens) };
             let text = tokens_to_text(&parsed);
@@ -180,12 +189,15 @@ impl AprilRecognizer {
         }
 
         let sample_rate = unsafe { aam_get_sample_rate(model) } as u32;
-        let userdata = Box::into_raw(Box::new(Userdata { tx }));
+        let userdata = Box::into_raw(Box::new(Userdata {
+            tx,
+            dropped: std::sync::atomic::AtomicBool::new(false),
+        }));
         let config = AprilConfig {
             speaker: AprilSpeakerID::default(),
             handler: Some(on_result),
             userdata: userdata as *mut c_void,
-            flags: CONFIG_FLAG_ASYNC_RT,
+            flags: CONFIG_FLAG_ASYNC_NO_RT,
         };
         let session = unsafe { aas_create_session(model, config) };
         if session.is_null() {
@@ -215,14 +227,24 @@ impl Recognizer for AprilRecognizer {
         self.sample_rate
     }
 
-    fn feed(&mut self, pcm: &[i16]) -> Result<()> {
+    fn feed(&mut self, pcm: &[i16]) -> Result<Fed> {
         if pcm.is_empty() {
-            return Ok(());
+            return Ok(Fed::Accepted);
         }
+        // Userdata は session より長く生存する。
+        let ud = unsafe { &*self.userdata };
+        ud.dropped
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         unsafe {
             aas_feed_pcm16(self.session, pcm.as_ptr() as *mut i16, pcm.len());
         }
-        Ok(())
+        // バッファが溢れると april はこの呼び出しの中で CANT_KEEP_UP を返し、
+        // 音声を丸ごと捨てる。
+        if ud.dropped.load(std::sync::atomic::Ordering::Relaxed) {
+            Ok(Fed::Dropped)
+        } else {
+            Ok(Fed::Accepted)
+        }
     }
 
     fn flush(&mut self) -> Result<()> {

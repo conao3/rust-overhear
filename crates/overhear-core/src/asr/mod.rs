@@ -36,11 +36,20 @@ pub enum AsrEvent {
     CantKeepUp,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fed {
+    Accepted,
+    Dropped,
+}
+
 pub trait Recognizer: Send {
     fn id(&self) -> &'static str;
     fn sample_rate(&self) -> u32;
     /// PCM16 mono を供給する。イベントは生成時に渡したチャネルへ流れる。
-    fn feed(&mut self, pcm: &[i16]) -> Result<()>;
+    ///
+    /// エンジンが処理に追いつけず音声を捨てたときは `Fed::Dropped` を返す。
+    /// 捨てた分はエンジンの時計が進まないので、呼び出し側が時間軸の差として数える。
+    fn feed(&mut self, pcm: &[i16]) -> Result<Fed>;
     /// 未処理の音声を処理して確定結果を出させる。
     fn flush(&mut self) -> Result<()>;
 }

@@ -6,7 +6,7 @@
 use anyhow::Result;
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::{AsrEvent, AsrToken, Recognizer, tokens_to_text};
+use super::{AsrEvent, AsrToken, Fed, Recognizer, tokens_to_text};
 
 const SENTENCES: &[&str] = &[
     "the quick brown fox jumps over the lazy dog",
@@ -70,7 +70,7 @@ impl Recognizer for MockRecognizer {
         self.sample_rate
     }
 
-    fn feed(&mut self, pcm: &[i16]) -> Result<()> {
+    fn feed(&mut self, pcm: &[i16]) -> Result<Fed> {
         self.fed_samples += pcm.len() as u64;
         let words: Vec<&str> = SENTENCES[self.sentence].split(' ').collect();
         let elapsed = self.now_ms().saturating_sub(self.sentence_start_ms);
@@ -91,7 +91,7 @@ impl Recognizer for MockRecognizer {
             self.emitted = 0;
             self.sentence_start_ms = self.now_ms();
         }
-        Ok(())
+        Ok(Fed::Accepted)
     }
 
     fn flush(&mut self) -> Result<()> {
