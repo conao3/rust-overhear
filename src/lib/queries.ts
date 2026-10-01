@@ -149,8 +149,18 @@ export const VOCAB = gql`
 
 export const SAVE_VOCAB = gql`
   ${VOCAB_FIELDS}
-  mutation SaveVocab($segmentId: ID!, $tokenIndex: Int!) {
-    saveVocab(segmentId: $segmentId, tokenIndex: $tokenIndex) {
+  mutation SaveVocab(
+    $segmentId: ID!
+    $tokenIndex: Int!
+    $sourceText: String!
+    $surface: String!
+  ) {
+    saveVocab(
+      segmentId: $segmentId
+      tokenIndex: $tokenIndex
+      sourceText: $sourceText
+      surface: $surface
+    ) {
       ...VocabFields
     }
   }

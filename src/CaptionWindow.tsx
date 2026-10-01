@@ -8,9 +8,9 @@ import { useQuery, useSubscription } from "@apollo/client/react";
 import { useMemo } from "react";
 
 import { TranslateAction } from "./components/TranslateAction";
-import { WordPopover } from "./components/WordPopover";
+import { SegmentWords } from "./components/SegmentWords";
 import { SEGMENTS, SEGMENT_UPDATES, TRANSLATION_ENGINES } from "./lib/queries";
-import { displayText, displayWords } from "./lib/casing";
+import { displayText } from "./lib/casing";
 import { useTranslationRequests } from "./lib/translation";
 import type { Segment, TranslationEngineInfo } from "./lib/types";
 
@@ -74,17 +74,7 @@ export function CaptionWindow() {
         {current ? (
           <>
             <p className="max-w-full text-2xl leading-snug font-medium text-balance">
-              {current.tokens.length > 0
-                ? displayWords(current).map((label, i) => (
-                    <span key={current.tokens[i].index}>
-                      <WordPopover
-                        token={current.tokens[i]}
-                        label={label}
-                        segmentId={current.id}
-                      />{" "}
-                    </span>
-                  ))
-                : displayText(current)}
+              <SegmentWords segment={current} />
             </p>
             {translation ? (
               <p className="max-w-full truncate text-base text-ink-muted">

@@ -2,15 +2,14 @@
  * 常時最前面のキャプションバー相当の表示。
  * 原文 (語ごとにクリック可能) と訳を出す。
  */
-import { displayText, displayWords } from "../lib/casing";
 import { formatMs } from "../lib/config";
-import type { Segment } from "../lib/types";
+import type { Segment, Token } from "../lib/types";
+import { SegmentWords } from "./SegmentWords";
 import { TranslateAction } from "./TranslateAction";
-import { WordPopover } from "./WordPopover";
 
 type Props = {
   segment: Segment | null;
-  onSaveWord?: (segmentId: string, tokenIndex: number) => void;
+  onSaveWord?: (segment: Segment, token: Token) => Promise<void>;
   savingWord?: boolean;
   onTranslate: (segment: Segment) => void;
   translating: boolean;
@@ -34,7 +33,6 @@ export function CaptionBar({
   }
 
   const translation = segment.translations.at(-1);
-  const words = displayWords(segment);
 
   return (
     <div className="rounded-xl bg-surface-raised/70 p-5 shadow-lg ring-1 ring-white/5">
@@ -53,19 +51,11 @@ export function CaptionBar({
       </div>
 
       <p className="text-2xl leading-relaxed font-medium">
-        {segment.tokens.length > 0
-          ? segment.tokens.map((token, i) => (
-              <span key={token.index}>
-                <WordPopover
-                  token={token}
-                  label={words[i]}
-                  segmentId={segment.id}
-                  onSave={onSaveWord}
-                  saving={savingWord}
-                />{" "}
-              </span>
-            ))
-          : displayText(segment)}
+        <SegmentWords
+          segment={segment}
+          onSaveWord={onSaveWord}
+          savingWord={savingWord}
+        />
       </p>
 
       {translation ? (

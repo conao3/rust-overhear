@@ -246,13 +246,15 @@ impl MutationRoot {
         ctx: &Context<'_>,
         segment_id: ID,
         token_index: i32,
+        source_text: String,
+        surface: String,
     ) -> async_graphql::Result<VocabItem> {
         let overhear = engine(ctx);
         let id = segment_id
             .parse::<u64>()
             .map_err(|_| async_graphql::Error::new("segmentId が数値でない"))?;
         let item = overhear
-            .save_vocab(id, token_index.max(0) as usize)
+            .save_vocab(id, token_index as usize, &source_text, &surface)
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         Ok(VocabItem::from(item))
     }

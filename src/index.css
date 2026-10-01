@@ -24,3 +24,8 @@ body {
     "Segoe UI",
     sans-serif;
 }
+
+.dictionary-dialog {
+  height: 100%;
+  max-height: inherit;
+}

@@ -1,112 +1,214 @@
 /**
- * 字幕の 1 語。
+ * 選択した単語の辞書。
  *
- * 字幕本体は react-aria-components のコレクションに載らないので、
- * 語そのものを button にして DialogTrigger の起点にしている。
- * 開いたときだけ辞書を引く (字幕は毎秒流れるので先読みしない)。
+ * 字幕と履歴の単語ボタンを起点にし、開いている語だけ辞書を引く。
+ * 高さの小さい字幕ウィンドウでは、全面のダイアログに表示する。
  */
 import { useQuery } from "@apollo/client/react";
-import { useState } from "react";
-import { Button, Dialog, DialogTrigger, Popover } from "react-aria-components";
+import { useState, useSyncExternalStore, type RefObject } from "react";
+import {
+  Button,
+  Dialog,
+  Heading,
+  Modal,
+  ModalOverlay,
+  Popover,
+} from "react-aria-components";
 
 import { LOOKUP } from "../lib/queries";
-import type { DictEntry, Token } from "../lib/types";
+import { displayText } from "../lib/casing";
+import type { DictEntry, Segment, Token } from "../lib/types";
 
 type Props = {
   token: Token;
   /** 表示する語。大文字・小文字を整えたもの。辞書は `token.surface` で引く。 */
   label: string;
-  segmentId: string;
-  onSave?: (segmentId: string, tokenIndex: number) => void;
+  segment: Segment;
+  triggerRef: RefObject<Element | null>;
+  dialogId: string;
+  onClose: () => void;
+  onSave?: (segment: Segment, token: Token) => Promise<void>;
   saving?: boolean;
 };
 
 export function WordPopover({
   token,
   label,
-  segmentId,
+  segment,
+  triggerRef,
+  dialogId,
+  onClose,
   onSave,
   saving,
 }: Props) {
-  const [isOpen, setOpen] = useState(false);
-  const { data, loading } = useQuery<{ lookup: DictEntry[] }>(LOOKUP, {
-    variables: { word: token.surface },
-    skip: !isOpen,
-  });
+  const compact = useSyncExternalStore(subscribeCompact, isCompact);
+  const { data, loading, error, refetch } = useQuery<{ lookup: DictEntry[] }>(
+    LOOKUP,
+    {
+      variables: { word: token.surface },
+    },
+  );
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
 
   const entries = data?.lookup ?? [];
 
-  return (
-    <DialogTrigger isOpen={isOpen} onOpenChange={setOpen}>
-      <Button
-        className="rounded px-0.5 outline-none transition-colors data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-accent/25 data-[pressed]:bg-accent/40"
-        aria-label={`${label} を調べる`}
+  const save = async () => {
+    setSaveMessage(null);
+    try {
+      await onSave?.(segment, token);
+      setSaved(true);
+      setSaveMessage(`「${label}」を語彙に保存しました`);
+    } catch (err) {
+      setSaveMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const dialog = (
+    <Dialog
+      id={dialogId}
+      aria-label={`${label} の辞書`}
+      className="dictionary-dialog flex min-h-0 flex-col outline-none"
+    >
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
+        <Heading
+          slot="title"
+          className="min-w-0 break-words text-lg font-semibold"
+        >
+          {label}
+        </Heading>
+        <div className="flex shrink-0 items-center gap-2">
+          {onSave && (
+            <Button
+              isDisabled={saving || saved}
+              className="rounded bg-accent/20 px-2 py-1 text-xs outline-none data-[disabled]:opacity-50 data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-accent/30"
+              onPress={() => void save()}
+            >
+              {saved ? "保存済み" : saving ? "保存中…" : "語彙に保存"}
+            </Button>
+          )}
+          <Button
+            onPress={onClose}
+            aria-label="辞書を閉じる"
+            className="rounded px-2 py-1 text-xs text-ink-muted outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/10"
+          >
+            閉じる
+          </Button>
+        </div>
+      </div>
+      <div
+        role="region"
+        aria-label="語義"
+        tabIndex={0}
+        className="min-h-0 overflow-y-auto overscroll-contain px-4 py-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
       >
-        {label}
-      </Button>
-      <Popover className="max-w-md rounded-lg border border-white/10 bg-surface-raised p-4 shadow-xl">
-        <Dialog className="outline-none">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-lg font-semibold">{label}</span>
-            {onSave && (
-              <Button
-                isDisabled={saving}
-                className="rounded bg-accent/20 px-2 py-1 text-xs outline-none data-[disabled]:opacity-50 data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-accent/30"
-                onPress={() => onSave(segmentId, token.index)}
-              >
-                語彙に保存
-              </Button>
-            )}
+        {saveMessage && (
+          <p role="status" className="mb-3 text-accent">
+            {saveMessage}
+          </p>
+        )}
+        {loading ? (
+          <p role="status" className="text-ink-muted">
+            辞書を引いている…
+          </p>
+        ) : error ? (
+          <div role="alert">
+            <p className="text-amber-300">辞書を取得できませんでした。</p>
+            <Button
+              className="mt-2 rounded bg-white/10 px-2 py-1 outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent"
+              onPress={() => void refetch().catch(() => {})}
+            >
+              再試行
+            </Button>
           </div>
-
-          {loading && (
-            <p className="mt-3 text-sm text-ink-muted">辞書を引いている…</p>
-          )}
-
-          {!loading && entries.length === 0 && (
-            <p className="mt-3 text-sm text-ink-muted">
-              辞書に見つからなかった
-            </p>
-          )}
-
-          <div className="mt-3 flex max-h-72 flex-col gap-3 overflow-y-auto">
+        ) : entries.length === 0 ? (
+          <p className="text-ink-muted">
+            「{label}」は辞書に見つかりませんでした。
+          </p>
+        ) : (
+          <div className="flex flex-col gap-4">
             {entries.map((entry, index) => (
-              <div
-                key={`${entry.source}-${entry.lemma}-${entry.posLabel ?? index}`}
-              >
-                <div className="text-sm">
+              <section key={`${entry.source}-${entry.lemma}-${index}`}>
+                <h3 className="flex flex-wrap items-baseline gap-2">
                   <span className="font-medium">{entry.lemma}</span>
                   {entry.posLabel && (
-                    <span className="ml-2 rounded bg-white/10 px-1 text-[10px] text-ink-muted">
+                    <span className="rounded bg-white/10 px-1 text-xs text-ink-muted">
                       {entry.posLabel}
                     </span>
                   )}
-                  <span className="ml-2 text-[10px] text-ink-muted opacity-60">
-                    {entry.source}
+                  <span className="text-xs text-ink-muted">
+                    {entry.source === "ejdict"
+                      ? "英和 · ejdict"
+                      : entry.source === "wordnet"
+                        ? "英英 · WordNet"
+                        : entry.source}
                   </span>
-                </div>
-                <ol className="mt-1 list-decimal pl-5 text-sm text-ink-muted">
-                  {entry.senses.slice(0, 3).map((sense, i) => (
-                    <li key={i} className="mt-1">
+                </h3>
+                <ol className="mt-1 list-decimal space-y-2 pl-5 text-ink-muted">
+                  {entry.senses.map((sense, i) => (
+                    <li key={i}>
                       {sense.definition}
                       {sense.synonyms.length > 0 && (
-                        <span className="ml-1 opacity-60">
+                        <span className="ml-1 opacity-70">
                           ＝ {sense.synonyms.join(", ")}
                         </span>
                       )}
-                      {sense.examples[0] && (
-                        <div className="mt-0.5 text-xs italic opacity-70">
-                          「{sense.examples[0]}」
-                        </div>
-                      )}
+                      {sense.examples.map((example, j) => (
+                        <p key={j} className="mt-1 text-xs italic">
+                          {example}
+                        </p>
+                      ))}
                     </li>
                   ))}
                 </ol>
-              </div>
+              </section>
             ))}
           </div>
-        </Dialog>
-      </Popover>
-    </DialogTrigger>
+        )}
+        {!compact && (
+          <p className="mt-4 border-t border-white/10 pt-3 text-xs text-ink-muted">
+            {displayText(segment)}
+          </p>
+        )}
+      </div>
+    </Dialog>
   );
+
+  return compact ? (
+    <ModalOverlay
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      isDismissable
+      className="fixed inset-0 z-50 flex bg-surface-raised"
+    >
+      <Modal className="flex h-full w-full min-w-0 flex-col">{dialog}</Modal>
+    </ModalOverlay>
+  ) : (
+    <Popover
+      isOpen
+      triggerRef={triggerRef}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      placement="bottom"
+      containerPadding={8}
+      maxHeight={480}
+      className="dictionary-popover z-50 flex w-96 max-w-[calc(100vw-16px)] flex-col overflow-hidden rounded-lg border border-white/10 bg-surface-raised shadow-xl"
+    >
+      {dialog}
+    </Popover>
+  );
+}
+
+const compactQuery = window.matchMedia("(max-height: 320px)");
+
+function isCompact() {
+  return compactQuery.matches;
+}
+
+function subscribeCompact(onChange: () => void) {
+  compactQuery.addEventListener("change", onChange);
+  return () => compactQuery.removeEventListener("change", onChange);
 }

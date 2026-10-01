@@ -686,14 +686,17 @@ impl Overhear {
     ///
     /// 保存時点の文・訳・語義・音声を焼き付けるので、後から segment が
     /// 履歴から溢れても、リングバッファから音声が消えても残る。
-    pub fn save_vocab(&self, segment_id: SegmentId, token_index: usize) -> Result<VocabItem> {
+    pub fn save_vocab(
+        &self,
+        segment_id: SegmentId,
+        token_index: usize,
+        source_text: &str,
+        surface: &str,
+    ) -> Result<VocabItem> {
         let segment = self
             .segment(segment_id)
             .ok_or_else(|| anyhow::anyhow!("segment {segment_id} が見つからない"))?;
-        let token = segment
-            .tokens
-            .get(token_index)
-            .ok_or_else(|| anyhow::anyhow!("token {token_index} が見つからない"))?;
+        let token = selected_token(&segment, token_index, source_text, surface)?;
 
         let entries = self.dictionaries.lookup(&token.surface);
         let lemma = entries
@@ -711,7 +714,11 @@ impl Overhear {
             sentence: segment.source_text.clone(),
             translation: segment.translations.last().map(|t| t.text.clone()),
             definition,
-            audio: self.segment_audio(segment_id),
+            audio: self
+                .ring
+                .lock()
+                .ok()
+                .and_then(|ring| ring.slice_ms(segment.start_ms, segment.end_ms)),
             sample_rate: self.config.sample_rate,
         })
     }
@@ -808,6 +815,19 @@ impl Overhear {
         let _ = self.updates.send(updated.clone());
         Some(updated)
     }
+}
+
+fn selected_token<'a>(
+    segment: &'a Segment,
+    token_index: usize,
+    source_text: &str,
+    surface: &str,
+) -> Result<&'a Token> {
+    let token = segment
+        .tokens
+        .get(token_index)
+        .filter(|token| segment.source_text == source_text && token.surface == surface);
+    token.ok_or_else(|| anyhow::anyhow!("字幕が更新されたため、単語を開き直して保存してください"))
 }
 
 /// ASR に供給した量と、ASR が捨てた量。
@@ -1103,6 +1123,30 @@ mod tests {
         assert_eq!(words[0].start_ms, 1680);
         assert_eq!(words[1].start_ms, 2480);
         assert_eq!(words[1].index, 1);
+    }
+
+    #[test]
+    fn saving_checks_the_displayed_sentence_and_word() {
+        let mut builder = SegmentBuilder::new("april");
+        let segment = builder
+            .apply(
+                AsrEvent::Final {
+                    text: "RUN HOME".into(),
+                    tokens: vec![tok("RUN", true, 1000), tok(" HOME", true, 1500)],
+                },
+                |ms| ms,
+            )
+            .unwrap();
+        assert_eq!(
+            selected_token(&segment, 0, "RUN HOME", "RUN")
+                .unwrap()
+                .surface,
+            "RUN"
+        );
+        assert!(selected_token(&segment, 0, "RUN HOME", "WALK").is_err());
+        assert!(selected_token(&segment, 1, "RUN HOME", "RUN").is_err());
+        assert!(selected_token(&segment, 0, "RUN AWAY", "RUN").is_err());
+        assert!(selected_token(&segment, usize::MAX, "RUN HOME", "RUN").is_err());
     }
 }
 

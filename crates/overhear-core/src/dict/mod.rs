@@ -92,9 +92,35 @@ impl DictionaryRegistry {
 
     /// 登録順に引き、見つかったものを全部返す。
     pub fn lookup(&self, surface: &str) -> Vec<DictEntry> {
+        let direct: Vec<Vec<DictEntry>> = self
+            .dictionaries
+            .iter()
+            .map(|d| d.lookup(surface))
+            .collect();
+        let mut lemmas = Vec::new();
+        for entry in direct.iter().flatten() {
+            if !lemmas.contains(&entry.lemma) {
+                lemmas.push(entry.lemma.clone());
+            }
+        }
         self.dictionaries
             .iter()
-            .flat_map(|d| d.lookup(surface))
+            .zip(direct)
+            .flat_map(|(dictionary, mut entries)| {
+                for lemma in &lemmas {
+                    if entries.iter().any(|entry| entry.lemma == *lemma) {
+                        continue;
+                    }
+                    for entry in dictionary.lookup(lemma) {
+                        if !entries.iter().any(|existing| {
+                            existing.lemma == entry.lemma && existing.pos == entry.pos
+                        }) {
+                            entries.push(entry);
+                        }
+                    }
+                }
+                entries
+            })
             .collect()
     }
 }
@@ -112,6 +138,7 @@ impl Default for DictionaryRegistry {
 /// `inflection_candidates` と併用する。
 pub fn normalize_surface(surface: &str) -> String {
     let trimmed = surface
+        .replace(['’', '‘'], "'")
         .trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '\'')
         .to_lowercase();
     trimmed
@@ -165,6 +192,8 @@ mod tests {
         assert_eq!(normalize_surface("dog's"), "dog");
         assert_eq!(normalize_surface("\"Stop!\""), "stop");
         assert_eq!(normalize_surface("well-known"), "well-known");
+        assert_eq!(normalize_surface("“Dog’s,”"), "dog");
+        assert_eq!(normalize_surface("don’t"), "don't");
     }
 
     #[test]
@@ -179,5 +208,64 @@ mod tests {
 
         // 短すぎる候補は出さない
         assert!(!inflection_candidates("as").contains(&"a".to_string()));
+    }
+
+    struct TestDictionary(&'static str);
+
+    impl Dictionary for TestDictionary {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn display_name(&self) -> &str {
+            self.0
+        }
+        fn lookup(&self, surface: &str) -> Vec<DictEntry> {
+            let lemma = match (self.0, surface) {
+                ("english", "went") => "go",
+                (_, "go") => "go",
+                (_, "running") => "running",
+                (_, "run") => "run",
+                _ => return Vec::new(),
+            };
+            let mut entries = vec![DictEntry {
+                lemma: lemma.into(),
+                pos: None,
+                senses: vec![],
+                source: self.0.into(),
+            }];
+            if self.0 == "english" && surface == "running" {
+                entries.extend(self.lookup("run"));
+            }
+            entries
+        }
+    }
+
+    #[test]
+    fn shares_lemmas_between_dictionaries_and_preserves_order() {
+        let dictionaries = DictionaryRegistry::new(vec![
+            Arc::new(TestDictionary("japanese")),
+            Arc::new(TestDictionary("english")),
+        ]);
+        let entries = dictionaries.lookup("went");
+        assert_eq!(
+            entries
+                .iter()
+                .map(|e| (e.source.as_str(), e.lemma.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("japanese", "go"), ("english", "go")]
+        );
+        let entries = dictionaries.lookup("running");
+        assert_eq!(
+            entries
+                .iter()
+                .map(|e| (e.source.as_str(), e.lemma.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("japanese", "running"),
+                ("japanese", "run"),
+                ("english", "running"),
+                ("english", "run")
+            ]
+        );
     }
 }

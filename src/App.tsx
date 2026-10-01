@@ -35,6 +35,7 @@ import type {
   AudioDevice,
   CaptureState,
   Segment,
+  Token,
   TranslationEngineInfo,
   VocabItem,
 } from "./lib/types";
@@ -131,10 +132,17 @@ export function App() {
   const devices = deviceData?.audioDevices ?? [];
 
   const onSaveWord = useCallback(
-    async (segmentId: string, tokenIndex: number) => {
+    async (segment: Segment, token: Token) => {
       setVocabMessage(null);
       try {
-        const res = await saveVocab({ variables: { segmentId, tokenIndex } });
+        const res = await saveVocab({
+          variables: {
+            segmentId: segment.id,
+            tokenIndex: token.index,
+            sourceText: segment.sourceText,
+            surface: token.surface,
+          },
+        });
         await refetchVocab();
         const saved = (res.data as { saveVocab?: VocabItem } | null | undefined)
           ?.saveVocab;
@@ -143,6 +151,7 @@ export function App() {
         setVocabMessage(
           `保存できなかった (${err instanceof Error ? err.message : String(err)})`,
         );
+        throw err;
       }
     },
     [refetchVocab, saveVocab],
@@ -259,6 +268,8 @@ export function App() {
             onTranslate={translation.request}
             isTranslating={translation.isPending}
             canTranslate={canTranslate}
+            onSaveWord={onSaveWord}
+            savingWord={savingWord}
             onRetranslate={(segment) => {
               void retranslate({
                 variables: { segmentId: segment.id, engineId },

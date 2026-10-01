@@ -6,9 +6,9 @@
  */
 import { Button, GridList, GridListItem } from "react-aria-components";
 
-import { displayText } from "../lib/casing";
 import { formatMs } from "../lib/config";
-import type { Segment } from "../lib/types";
+import type { Segment, Token } from "../lib/types";
+import { SegmentWords } from "./SegmentWords";
 
 type Props = {
   segments: Segment[];
@@ -17,6 +17,8 @@ type Props = {
   onRetranslate: (segment: Segment) => void;
   isTranslating: (segment: Segment) => boolean;
   canTranslate: boolean;
+  onSaveWord: (segment: Segment, token: Token) => Promise<void>;
+  savingWord: boolean;
 };
 
 export function SegmentHistory({
@@ -26,12 +28,14 @@ export function SegmentHistory({
   onRetranslate,
   isTranslating,
   canTranslate,
+  onSaveWord,
+  savingWord,
 }: Props) {
   return (
     <GridList
       aria-label="発話の履歴"
       items={segments}
-      dependencies={[canTranslate, isTranslating]}
+      dependencies={[canTranslate, isTranslating, onSaveWord, savingWord]}
       className="flex flex-col gap-2 outline-none"
       renderEmptyState={() => (
         <div className="py-8 text-center text-sm text-ink-muted">
@@ -51,7 +55,13 @@ export function SegmentHistory({
               {formatMs(segment.startMs)}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm">{displayText(segment)}</p>
+              <p className="text-sm">
+                <SegmentWords
+                  segment={segment}
+                  onSaveWord={onSaveWord}
+                  savingWord={savingWord}
+                />
+              </p>
               {segment.translations.map((t) => (
                 <p key={t.engineId} className="mt-1 text-sm text-ink-muted">
                   <span className="mr-1 text-[10px] uppercase opacity-60">
