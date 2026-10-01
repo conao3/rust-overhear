@@ -35,6 +35,7 @@ export function CaptionWindow() {
   // 差し替えは Segment の正規化キャッシュが吸収するので、
   // ここで面倒を見るのは新しい id を一覧へ足すことだけ。
   useSubscription<{ segmentUpdates: Segment }>(SEGMENT_UPDATES, {
+    ignoreResults: true,
     onData: ({ data: incoming, client }) => {
       const segment = incoming.data?.segmentUpdates;
       if (!segment) return;

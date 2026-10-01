@@ -80,6 +80,7 @@ export function App() {
   // interim → final の差し替えは Segment の正規化キャッシュが吸収する。
   // ここで面倒を見るのは「新しい id を一覧へ足す」ことだけ。
   useSubscription<{ segmentUpdates: Segment }>(SEGMENT_UPDATES, {
+    ignoreResults: true,
     onData: ({ data, client }) => {
       const incoming = data.data?.segmentUpdates;
       if (!incoming) return;

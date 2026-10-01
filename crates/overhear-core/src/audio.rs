@@ -30,7 +30,7 @@ impl Default for CaptureConfig {
             sample_rate: 16_000,
             target: None,
             capture_sink: true,
-            latency: "100ms".to_string(),
+            latency: "10ms".to_string(),
         }
     }
 }
@@ -69,6 +69,8 @@ pub fn spawn(cfg: &CaptureConfig, tx: mpsc::UnboundedSender<Vec<i16>>) -> Result
         .arg("1")
         .arg("--format")
         .arg("s16")
+        .arg("--container")
+        .arg("raw")
         .arg("--latency")
         .arg(&cfg.latency);
 
@@ -91,22 +93,18 @@ pub fn spawn(cfg: &CaptureConfig, tx: mpsc::UnboundedSender<Vec<i16>>) -> Result
         .take()
         .context("pw-record の stdout が取れない")?;
 
-    // 128ms 相当 (16kHz なら 2048 サンプル) ずつ読む。
+    // 128ms 相当まで一度に読む。read はバッファが埋まるのを待たず、届いた分を返す。
     let chunk_samples = (cfg.sample_rate as usize / 1000) * 128;
     let alive = Arc::new(AtomicBool::new(true));
     let reader_alive = Arc::clone(&alive);
     std::thread::spawn(move || {
         let mut raw = vec![0u8; chunk_samples * 2];
+        let mut pending = None;
         loop {
             match stdout.read(&mut raw) {
                 Ok(0) => break,
                 Ok(n) => {
-                    // 端数バイトは切り捨てる (次の read で整合する)
-                    let n = n - (n % 2);
-                    let samples: Vec<i16> = raw[..n]
-                        .chunks_exact(2)
-                        .map(|b| i16::from_le_bytes([b[0], b[1]]))
-                        .collect();
+                    let samples = decode_pcm(&raw[..n], &mut pending);
                     if tx.send(samples).is_err() {
                         break; // 受け手が落ちた
                     }
@@ -122,4 +120,39 @@ pub fn spawn(cfg: &CaptureConfig, tx: mpsc::UnboundedSender<Vec<i16>>) -> Result
     });
 
     Ok(CaptureHandle { child, alive })
+}
+
+fn decode_pcm(bytes: &[u8], pending: &mut Option<u8>) -> Vec<i16> {
+    let mut samples = Vec::with_capacity((bytes.len() + usize::from(pending.is_some())) / 2);
+    let mut bytes = bytes.iter().copied();
+    while let Some(byte) = bytes.next() {
+        if let Some(first) = pending.take() {
+            samples.push(i16::from_le_bytes([first, byte]));
+        } else if let Some(second) = bytes.next() {
+            samples.push(i16::from_le_bytes([byte, second]));
+        } else {
+            *pending = Some(byte);
+        }
+    }
+    samples
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pcm_survives_reads_split_inside_a_sample() {
+        let expected = [-32768i16, -1, 0, 1, 32767];
+        let bytes: Vec<_> = expected.iter().flat_map(|s| s.to_le_bytes()).collect();
+        for size in 1..=bytes.len() {
+            let mut pending = None;
+            let actual: Vec<_> = bytes
+                .chunks(size)
+                .flat_map(|part| decode_pcm(part, &mut pending))
+                .collect();
+            assert_eq!(actual, expected);
+            assert_eq!(pending, None);
+        }
+    }
 }

@@ -35,10 +35,6 @@ const MIN_REFINE_MS: u64 = 600;
 const CAPTURE_RETRY_MIN: Duration = Duration::from_secs(1);
 const CAPTURE_RETRY_MAX: Duration = Duration::from_secs(30);
 
-/// 途中経過を配信する最短の間隔。april は毎秒 10〜15 回更新するが、
-/// 字幕を読む目にはこれで足り、WebView の再描画とサーバの CPU が減る。
-const INTERIM_MIN_INTERVAL: Duration = Duration::from_millis(200);
-
 /// これより古い台詞は whisper に掛けない。CPU が詰まって差し替えが遅れても、
 /// 画面から流れた台詞のために CPU を使い続けない。
 const REFINE_MAX_AGE_MS: u64 = 30_000;
@@ -130,8 +126,6 @@ pub struct Overhear {
     refining: AtomicBool,
     /// 最後に ASR が segment を出した時刻。台詞の途切れを測る。
     last_speech: Mutex<Instant>,
-    /// 最後に途中経過を配信した時刻。
-    last_interim_sent: Mutex<Option<Instant>>,
     /// 途切れで最後に訳へ回した segment。同じ台詞を二度積まない。
     last_pause_translated: AtomicU64,
     /// この時刻までは入力を無音として扱う。聞き直しの再生音を
@@ -158,9 +152,6 @@ impl Overhear {
         let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<Vec<i16>>();
         let (asr_tx, mut asr_rx) = mpsc::unbounded_channel::<AsrEvent>();
 
-        let capture =
-            audio::spawn(&config.capture, audio_tx.clone()).context("音声キャプチャの起動")?;
-
         let mut recognizer: Box<dyn Recognizer> = match config.engine {
             #[cfg(feature = "april")]
             EngineChoice::April => Box::new(crate::asr::april::AprilRecognizer::from_env(
@@ -176,6 +167,8 @@ impl Overhear {
             )),
         };
         let asr_engine = recognizer.id();
+        let capture =
+            audio::spawn(&config.capture, audio_tx.clone()).context("音声キャプチャの起動")?;
 
         let ring = Arc::new(Mutex::new(RingBuffer::new(
             config.sample_rate,
@@ -195,8 +188,7 @@ impl Overhear {
             let ring = Arc::clone(&ring);
             let mute_until = Arc::clone(&mute_until);
             let clock = Arc::clone(&clock);
-            let mut gate =
-                SilenceGate::new(config.silence_threshold, crate::gate::DEFAULT_HANGOVER);
+            let mut gate = SilenceGate::new(config.silence_threshold, config.sample_rate);
             let gate_enabled = config.silence_threshold > 0;
 
             tokio::task::spawn_blocking(move || {
@@ -258,7 +250,6 @@ impl Overhear {
             translate_queue: WorkQueue::default(),
             refining: AtomicBool::new(false),
             last_speech: Mutex::new(Instant::now()),
-            last_interim_sent: Mutex::new(None),
             last_pause_translated: AtomicU64::new(0),
             mute_until,
             capture: Mutex::new(Some(capture)),
@@ -318,28 +309,11 @@ impl Overhear {
             *last = Instant::now();
         }
         self.upsert(segment.clone());
-        if !is_final && !self.interim_due() {
-            // 履歴には入れておき、配信だけ間引く。確定は必ず配信する。
-            return;
-        }
         let _ = self.updates.send(segment.clone());
 
         if is_final && !segment.source_text.is_empty() && self.whisper.is_some() {
             self.refine_queue.push(segment.id);
         }
-    }
-
-    /// 途中経過を配信してよいか。よければ配信時刻を更新する。
-    fn interim_due(&self) -> bool {
-        let Ok(mut last) = self.last_interim_sent.lock() else {
-            return true;
-        };
-        let now = Instant::now();
-        if last.is_some_and(|t| now.duration_since(t) < INTERIM_MIN_INTERVAL) {
-            return false;
-        }
-        *last = Some(now);
-        true
     }
 
     /// segment の翻訳を待ち行列に積む。結果は subscription で届く。

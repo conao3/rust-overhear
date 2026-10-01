@@ -1,5 +1,4 @@
-import { useId, useRef, useState } from "react";
-import { Button } from "react-aria-components";
+import { memo, useId, useRef, useState } from "react";
 
 import { displayText, displayWords } from "../lib/casing";
 import type { Segment, Token } from "../lib/types";
@@ -11,7 +10,11 @@ type Props = {
   savingWord?: boolean;
 };
 
-export function SegmentWords({ segment, onSaveWord, savingWord }: Props) {
+export const SegmentWords = memo(function SegmentWords({
+  segment,
+  onSaveWord,
+  savingWord,
+}: Props) {
   const [selected, setSelected] = useState<{
     segment: Segment;
     token: Token;
@@ -28,21 +31,22 @@ export function SegmentWords({ segment, onSaveWord, savingWord }: Props) {
     <>
       {displayed.tokens.map((token, i) => (
         <span key={token.index}>
-          <Button
-            className="rounded px-0.5 outline-none transition-colors data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-accent/25 data-[pressed]:bg-accent/40"
+          <button
+            type="button"
+            className="rounded px-0.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent hover:bg-accent/25 active:bg-accent/40"
             aria-label={`${words[i]} を調べる`}
             aria-haspopup="dialog"
             aria-expanded={selected?.token.index === token.index}
             aria-controls={
               selected?.token.index === token.index ? dialogId : undefined
             }
-            onPress={(event) => {
-              triggerRef.current = event.target;
+            onClick={(event) => {
+              triggerRef.current = event.currentTarget;
               setSelected({ segment: displayed, token, label: words[i] });
             }}
           >
             {words[i]}
-          </Button>{" "}
+          </button>{" "}
         </span>
       ))}
       {selected && (
@@ -59,4 +63,4 @@ export function SegmentWords({ segment, onSaveWord, savingWord }: Props) {
       )}
     </>
   );
-}
+});

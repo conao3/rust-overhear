@@ -8,6 +8,7 @@
 //! in-process 化 (whisper-rs) はいつでもここの内側に閉じて差し替えられる。
 
 use std::net::TcpListener;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -71,6 +72,14 @@ impl WhisperRefiner {
             .arg(threads.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpriority(libc::PRIO_PROCESS, 0, 10) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
         // 親が落ちても whisper-server が残らないようにする。
         let child = die_with_parent(&mut command)
             .spawn()

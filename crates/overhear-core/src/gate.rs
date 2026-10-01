@@ -8,30 +8,36 @@
 //! との差は [`ClockMap`] に区切りごとに残し、segment を組むときにトークンの
 //! 時刻ごとに足し戻す。
 
+use std::collections::VecDeque;
+
 /// これを超えたら「音がある」とみなす (i16 の振幅)。
 /// 小さすぎると環境ノイズで開きっぱなしになり、大きすぎると小声を切る。
 pub const DEFAULT_THRESHOLD: u16 = 300;
-/// 静かになってから供給を続けるチャンク数。語尾を切らないための余韻。
-pub const DEFAULT_HANGOVER: u32 = 8;
+/// 静かになってから供給を続ける時間。語尾を切らないための余韻。
+const HANGOVER_MS: usize = 400;
+const LOOKBACK_MS: usize = 128;
 
 pub struct SilenceGate {
     threshold: u16,
-    hangover: u32,
-    /// 余韻の残り。0 なら閉じている。
-    remaining: u32,
-    /// 開いた瞬間に一緒に流す直前のチャンク。語頭を切らないため。
-    lookback: Option<Vec<i16>>,
+    hangover: usize,
+    /// 余韻の残りサンプル数。0 なら閉じている。
+    remaining: usize,
+    /// 開いた瞬間に一緒に流す直前の音声。語頭を切らないため。
+    lookback: VecDeque<i16>,
+    lookback_samples: usize,
     /// 供給しなかった累積サンプル数。
     skipped: u64,
 }
 
 impl SilenceGate {
-    pub fn new(threshold: u16, hangover: u32) -> Self {
+    pub fn new(threshold: u16, sample_rate: u32) -> Self {
+        let lookback_samples = sample_rate as usize * LOOKBACK_MS / 1000;
         Self {
             threshold,
-            hangover,
+            hangover: sample_rate as usize * HANGOVER_MS / 1000,
             remaining: 0,
-            lookback: None,
+            lookback: VecDeque::with_capacity(lookback_samples),
+            lookback_samples,
             skipped: 0,
         }
     }
@@ -48,34 +54,38 @@ impl SilenceGate {
     ///
     /// `force_closed` は聞き直しの再生中に使う (自分の音を拾い直さない)。
     pub fn admit(&mut self, chunk: &[i16], force_closed: bool) -> Vec<Vec<i16>> {
-        let peak = chunk.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
-        let loud = !force_closed && peak > self.threshold;
-
+        if force_closed {
+            self.remaining = 0;
+            self.lookback.clear();
+            self.skipped += chunk.len() as u64;
+            return Vec::new();
+        }
+        let loud = chunk.iter().any(|s| s.unsigned_abs() > self.threshold);
         if loud {
-            let was_closed = self.remaining == 0;
             self.remaining = self.hangover;
-            let mut out = Vec::with_capacity(2);
-            // 閉じていたところから開いたときだけ、直前のチャンクを添える。
-            if was_closed {
-                if let Some(prev) = self.lookback.take() {
-                    self.skipped = self.skipped.saturating_sub(prev.len() as u64);
-                    out.push(prev);
-                }
-            }
-            self.lookback = None;
-            out.push(chunk.to_vec());
-            return out;
+            let mut samples = Vec::with_capacity(self.lookback.len() + chunk.len());
+            self.skipped -= self.lookback.len() as u64;
+            samples.extend(self.lookback.drain(..));
+            samples.extend_from_slice(chunk);
+            return vec![samples];
         }
 
         if self.remaining > 0 {
-            self.remaining -= 1;
-            self.lookback = None;
+            self.remaining = self.remaining.saturating_sub(chunk.len());
             return vec![chunk.to_vec()];
         }
-
-        // 閉じている。次に開いたとき用に直前だけ覚えておく。
-        self.skipped += chunk.len() as u64;
-        self.lookback = Some(chunk.to_vec());
+        let skipped = chunk;
+        self.skipped += skipped.len() as u64;
+        if skipped.len() >= self.lookback_samples {
+            self.lookback.clear();
+            self.lookback
+                .extend(&skipped[skipped.len() - self.lookback_samples..]);
+        } else {
+            let remove =
+                (self.lookback.len() + skipped.len()).saturating_sub(self.lookback_samples);
+            self.lookback.drain(..remove);
+            self.lookback.extend(skipped);
+        }
         Vec::new()
     }
 }
@@ -128,7 +138,7 @@ impl ClockMap {
 
 impl Default for SilenceGate {
     fn default() -> Self {
-        Self::new(DEFAULT_THRESHOLD, DEFAULT_HANGOVER)
+        Self::new(DEFAULT_THRESHOLD, 16_000)
     }
 }
 
@@ -145,7 +155,7 @@ mod tests {
 
     #[test]
     fn closed_while_quiet() {
-        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 2);
+        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 1_000);
         assert!(gate.admit(&quiet(), false).is_empty());
         assert!(gate.admit(&quiet(), false).is_empty());
         // 供給しなかったぶんは数えられている
@@ -155,11 +165,11 @@ mod tests {
 
     #[test]
     fn opens_with_lookback() {
-        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 2);
+        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 1_000);
         gate.admit(&quiet(), false); // 直前として覚えられる
         let out = gate.admit(&loud(), false);
-        // 語頭を切らないよう、直前の 1 チャンクも一緒に流す
-        assert_eq!(out.len(), 2);
+        // 語頭を切らないよう、直前の音声も一緒に流す
+        assert_eq!(out, vec![[quiet(), loud()].concat()]);
         // 流した以上、飛ばした扱いは取り消す
         assert_eq!(gate.skipped_samples(), 0);
         assert!(gate.is_open());
@@ -167,11 +177,12 @@ mod tests {
 
     #[test]
     fn hangover_keeps_feeding_after_speech() {
-        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 2);
+        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 1_000);
         gate.admit(&loud(), false);
         // 余韻のあいだは静かでも流す
-        assert_eq!(gate.admit(&quiet(), false).len(), 1);
-        assert_eq!(gate.admit(&quiet(), false).len(), 1);
+        for _ in 0..4 {
+            assert_eq!(gate.admit(&quiet(), false).len(), 1);
+        }
         // 余韻が切れたら閉じる
         assert!(gate.admit(&quiet(), false).is_empty());
     }
@@ -201,9 +212,39 @@ mod tests {
 
     #[test]
     fn force_closed_ignores_loud_audio() {
-        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 2);
+        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 1_000);
         // 聞き直しの再生中は、音が大きくても拾わない
         assert!(gate.admit(&loud(), true).is_empty());
+        assert_eq!(gate.skipped_samples(), 100);
+    }
+    #[test]
+    fn gate_timing_is_independent_of_capture_chunk_size() {
+        for chunk_size in [1, 5, 10, 20, 40, 100] {
+            let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 1_000);
+            let mut input = vec![0; 1_000];
+            input.extend(vec![5000; 200]);
+            input.extend(vec![0; 1_000]);
+            let admitted: Vec<_> = input
+                .chunks(chunk_size)
+                .flat_map(|chunk| gate.admit(chunk, false))
+                .flatten()
+                .collect();
+            assert_eq!(admitted.len(), 128 + 200 + 400, "chunk_size={chunk_size}");
+            assert_eq!(
+                gate.skipped_samples() as usize + admitted.len(),
+                input.len()
+            );
+            assert_eq!(&admitted[128..328], &[5000; 200]);
+        }
+    }
+
+    #[test]
+    fn muting_discards_hangover_and_lookback() {
+        let mut gate = SilenceGate::new(DEFAULT_THRESHOLD, 1_000);
+        gate.admit(&loud(), false);
+        assert!(gate.admit(&loud(), true).is_empty());
+        assert!(!gate.is_open());
+        assert_eq!(gate.admit(&loud(), false), vec![loud()]);
         assert_eq!(gate.skipped_samples(), 100);
     }
 }
