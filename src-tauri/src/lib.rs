@@ -36,7 +36,6 @@ fn build_caption_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> 
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(true)
-        .transparent(true)
         .initialization_script(script)
         .build()?;
 

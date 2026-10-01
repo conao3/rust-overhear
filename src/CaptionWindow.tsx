@@ -56,7 +56,7 @@ export function CaptionWindow() {
   const translation = current?.translations.at(-1);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl bg-surface/90 ring-1 ring-white/10 backdrop-blur">
+    <div className="flex h-full flex-col overflow-hidden rounded-xl bg-surface ring-1 ring-white/10">
       {/* 枠が無いので、ここを掴んで動かす */}
       <div
         data-tauri-drag-region
