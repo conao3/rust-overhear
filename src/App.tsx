@@ -12,7 +12,7 @@ import { VocabList } from "./components/VocabList";
 import {
   AudioUnavailableError,
   fetchAudioObjectUrl,
-  formatMs,
+  formatDuration,
 } from "./lib/config";
 import {
   AUDIO_DEVICES,
@@ -187,27 +187,26 @@ export function App() {
       <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold">overhear</h1>
-          {captureState && (
-            <p className="text-xs text-ink-muted">
-              {captureState.asrEngine}
-              {captureState.refiner && ` + ${captureState.refiner}`} ·{" "}
-              {captureState.sampleRate} Hz ·{" "}
-              <span title="聞き直し用に保持している音声の長さ。上限を超えた古い音声は消えます。5秒ごとに更新します。">
-                聞き直し用音声 {formatMs(captureState.bufferedMs)} /{" "}
-                {formatMs(captureState.ringSeconds * 1000)}
-              </span>{" "}
-              · 訳先 {captureState.targetLang}
-              {captureState.translationBacklog > 0 &&
-                ` · 翻訳待ち ${captureState.translationBacklog}`}
-              {!captureState.running && (
-                <span className="ml-2 rounded bg-amber-500/20 px-1.5 text-amber-300">
-                  音声を拾えていない (再接続している)
-                </span>
-              )}
-            </p>
-          )}
+          <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+            {captureState ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  className={`h-1.5 w-1.5 rounded-full ${captureState.running ? "bg-accent" : "bg-amber-400"}`}
+                />
+                {captureState.running
+                  ? "音声を取得中"
+                  : "音声に再接続しています…"}
+              </span>
+            ) : (
+              "接続中…"
+            )}
+            {captureState && captureState.translationBacklog > 0 && (
+              <span>翻訳待ち {captureState.translationBacklog} 件</span>
+            )}
+          </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <DevicePicker
             devices={devices}
             selected={captureState?.captureTarget ?? null}
@@ -264,7 +263,19 @@ export function App() {
           id="history"
           className="min-h-0 flex-1 overflow-y-auto outline-none"
         >
+          {captureState && (
+            <p className="mb-3 text-xs leading-relaxed text-ink-muted">
+              各行の「聞き直す」から音声を再生できます。 音声は最大
+              {formatDuration(captureState.ringSeconds * 1000)}
+              間保持され、古いものから自動で削除されます。
+            </p>
+          )}
           <SegmentHistory
+            audioAvailableFromMs={
+              captureState
+                ? Math.max(0, captureState.capturedMs - captureState.bufferedMs)
+                : 0
+            }
             segments={[...segments].reverse()}
             onPlay={(segment) =>
               void play(segment.audioUrl, segment.endMs - segment.startMs)
@@ -303,6 +314,27 @@ export function App() {
           className="min-h-0 flex-1 overflow-y-auto outline-none"
         >
           <SettingsPanel />
+          {captureState && (
+            <details className="mt-6 border-t border-white/10 pt-4 text-xs text-ink-muted">
+              <summary className="w-fit cursor-pointer rounded outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                動作情報
+              </summary>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2">
+                <dt>音声認識</dt>
+                <dd>{captureState.asrEngine}</dd>
+                {captureState.refiner && (
+                  <>
+                    <dt>認識結果の補正</dt>
+                    <dd>{captureState.refiner}</dd>
+                  </>
+                )}
+                <dt>サンプルレート</dt>
+                <dd>{captureState.sampleRate.toLocaleString()} Hz</dd>
+                <dt>音声の保持期間</dt>
+                <dd>最大{formatDuration(captureState.ringSeconds * 1000)}</dd>
+              </dl>
+            </details>
+          )}
         </TabPanel>
       </Tabs>
 

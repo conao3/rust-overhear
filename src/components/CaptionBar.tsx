@@ -47,7 +47,6 @@ export function CaptionBar({
           {segment.status === "FINAL" ? "確定" : "認識中"}
         </span>
         <span>{formatMs(segment.startMs)}</span>
-        <span>· {segment.asrEngine}</span>
       </div>
 
       <p className="text-2xl leading-relaxed font-medium">

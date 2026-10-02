@@ -12,6 +12,7 @@ import { SegmentWords } from "./SegmentWords";
 
 type Props = {
   segments: Segment[];
+  audioAvailableFromMs: number;
   onPlay: (segment: Segment) => void;
   onTranslate: (segment: Segment) => void;
   onRetranslate: (segment: Segment) => void;
@@ -23,6 +24,7 @@ type Props = {
 
 export function SegmentHistory({
   segments,
+  audioAvailableFromMs,
   onPlay,
   onTranslate,
   onRetranslate,
@@ -35,7 +37,13 @@ export function SegmentHistory({
     <GridList
       aria-label="発話の履歴"
       items={segments}
-      dependencies={[canTranslate, isTranslating, onSaveWord, savingWord]}
+      dependencies={[
+        canTranslate,
+        isTranslating,
+        onSaveWord,
+        savingWord,
+        audioAvailableFromMs,
+      ]}
       className="flex flex-col gap-2 outline-none"
       renderEmptyState={() => (
         <div className="py-8 text-center text-sm text-ink-muted">
@@ -78,10 +86,18 @@ export function SegmentHistory({
             </div>
             <div className="flex shrink-0 gap-1">
               <Button
-                className="rounded bg-white/10 px-2 py-1 text-xs outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/20"
+                isDisabled={segment.startMs < audioAvailableFromMs}
+                aria-label={
+                  segment.startMs < audioAvailableFromMs
+                    ? "保持期間を過ぎたため、この音声は再生できません"
+                    : "この発話を聞き直す"
+                }
+                className="rounded bg-white/10 px-2 py-1 text-xs outline-none data-[disabled]:cursor-default data-[disabled]:bg-transparent data-[disabled]:text-ink-muted data-[focus-visible]:ring-2 data-[focus-visible]:ring-accent data-[hovered]:bg-white/20"
                 onPress={() => onPlay(segment)}
               >
-                再生
+                {segment.startMs < audioAvailableFromMs
+                  ? "音声なし"
+                  : "聞き直す"}
               </Button>
               {canTranslate && (
                 <Button

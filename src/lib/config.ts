@@ -45,7 +45,9 @@ export async function fetchAudioObjectUrl(path: string): Promise<string> {
       : {},
   });
   if (res.status === 404) {
-    throw new AudioUnavailableError("この音声はリングバッファから溢れている");
+    throw new AudioUnavailableError(
+      "この音声は保持期間を過ぎたため、再生できません",
+    );
   }
   if (!res.ok) {
     throw new Error(`音声を取得できない (HTTP ${res.status})`);
@@ -58,4 +60,14 @@ export function formatMs(ms: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return [
+    minutes > 0 ? `${minutes}分` : "",
+    remainder > 0 || minutes === 0 ? `${remainder}秒` : "",
+  ].join("");
 }
