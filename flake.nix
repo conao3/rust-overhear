@@ -40,6 +40,12 @@
                 hash = "sha256-vw9Qs3p01MTsi+VZ320/Sd+/IMibqtc7JEHiC9GjYzI=";
               };
 
+              ipa-us = final.fetchurl {
+                name = "ipa-dict-en-US.txt";
+                url = "https://raw.githubusercontent.com/open-dict-data/ipa-dict/43c3570eb3553bdd19fccd2bd0091534889af023/data/en_US.txt";
+                hash = "sha256-KvbxVKXDYydfBS0fhazt7zjtGFypdFqkMUvnf2tw3mc=";
+              };
+
               whisper-model = final.fetchurl {
                 name = "ggml-base.en.bin";
                 url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
@@ -54,6 +60,7 @@
                 april-model
                 whisper-model
                 ejdict
+                ipa-us
                 ;
             };
 
@@ -145,6 +152,7 @@
                   --set WHISPER_MODEL_PATH "${pkgs.whisper-model}" \
                   --set WORDNET_DICT_DIR "${pkgs.wordnet}/dict" \
                   --set EJDICT_PATH "${pkgs.ejdict}/ejdict-hand-utf8.txt" \
+                  --set IPA_US_PATH "${pkgs.ipa-us}" \
                   --set OVERHEAR_AUTOSTART_EXEC overhear \
                   --set-default WEBKIT_DISABLE_DMABUF_RENDERER 1 \
                   --prefix LD_LIBRARY_PATH : "${pkgs.libayatana-appindicator}/lib" \
@@ -156,6 +164,7 @@
                   }"
               done
 
+              install -Dm644 THIRD_PARTY_LICENSES.txt $out/share/licenses/overhear/THIRD_PARTY_LICENSES.txt
               install -Dm644 src-tauri/icons/128x128.png \
                 $out/share/icons/hicolor/128x128/apps/overhear.png
               install -Dm644 ${desktopItem}/share/applications/overhear.desktop \
@@ -203,6 +212,7 @@
               WORDNET_DICT_DIR = "${pkgs.wordnet}/dict";
               WHISPER_MODEL_PATH = "${pkgs.whisper-model}";
               EJDICT_PATH = "${pkgs.ejdict}/ejdict-hand-utf8.txt";
+              IPA_US_PATH = "${pkgs.ipa-us}";
               APRIL_MODEL_PATH = "${pkgs.april-model}";
               # libaprilasr.so と libayatana-appindicator は dlopen されるので
               # 実行時の検索パスに載せる。

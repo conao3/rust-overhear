@@ -8,6 +8,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 pub mod ejdict;
+pub mod ipa;
 pub mod wordnet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -47,6 +48,8 @@ pub struct DictEntry {
     pub lemma: String,
     /// 品詞。辞書によっては持たない (英和など)。
     pub pos: Option<Pos>,
+    #[serde(default)]
+    pub ipa_us: Option<String>,
     pub senses: Vec<DictSense>,
     pub source: String,
 }
@@ -60,11 +63,15 @@ pub trait Dictionary: Send + Sync {
 
 pub struct DictionaryRegistry {
     dictionaries: Vec<Arc<dyn Dictionary>>,
+    pronunciation: ipa::IpaDict,
 }
 
 impl DictionaryRegistry {
     pub fn new(dictionaries: Vec<Arc<dyn Dictionary>>) -> Self {
-        Self { dictionaries }
+        Self {
+            dictionaries,
+            pronunciation: ipa::IpaDict::default(),
+        }
     }
 
     /// 環境から引けるものだけを登録する。辞書が無くても字幕は動く。
@@ -79,7 +86,14 @@ impl DictionaryRegistry {
             Ok(wn) => dictionaries.push(Arc::new(wn)),
             Err(err) => tracing::warn!(%err, "WordNet を読み込めなかった"),
         }
-        Self { dictionaries }
+        let pronunciation = ipa::IpaDict::from_env().unwrap_or_else(|err| {
+            tracing::warn!(%err, "発音辞書を読み込めなかった");
+            ipa::IpaDict::default()
+        });
+        Self {
+            dictionaries,
+            pronunciation,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -120,6 +134,10 @@ impl DictionaryRegistry {
                     }
                 }
                 entries
+            })
+            .map(|mut entry| {
+                entry.ipa_us = self.pronunciation.lookup(&entry.lemma).map(str::to_owned);
+                entry
             })
             .collect()
     }
@@ -230,6 +248,7 @@ mod tests {
             let mut entries = vec![DictEntry {
                 lemma: lemma.into(),
                 pos: None,
+                ipa_us: None,
                 senses: vec![],
                 source: self.0.into(),
             }];
@@ -266,6 +285,27 @@ mod tests {
                 ("english", "running"),
                 ("english", "run")
             ]
+        );
+    }
+    #[test]
+    fn pronunciation_matches_the_headword_after_inflection_resolution() {
+        let mut dictionaries = DictionaryRegistry::new(vec![
+            Arc::new(TestDictionary("japanese")),
+            Arc::new(TestDictionary("english")),
+        ]);
+        dictionaries.pronunciation = ipa::IpaDict::read(&b"went\t/went/\ngo\t/go/\n"[..]).unwrap();
+        let entries = dictionaries.lookup("went");
+        assert_eq!(entries.len(), 2);
+        assert!(
+            entries
+                .iter()
+                .all(|e| e.lemma == "go" && e.ipa_us.as_deref() == Some("/go/"))
+        );
+        assert!(
+            dictionaries
+                .lookup("running")
+                .iter()
+                .all(|e| e.ipa_us.is_none())
         );
     }
 }

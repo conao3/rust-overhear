@@ -85,6 +85,7 @@ impl Dictionary for EjDict {
                 return vec![DictEntry {
                     lemma: candidate,
                     pos: None,
+                    ipa_us: None,
                     senses: senses
                         .iter()
                         .map(|s| DictSense {

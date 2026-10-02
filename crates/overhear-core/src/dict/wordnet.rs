@@ -175,6 +175,7 @@ impl Dictionary for WordNet {
                     entries.push(DictEntry {
                         lemma,
                         pos: Some(pos),
+                        ipa_us: None,
                         senses,
                         source: "wordnet".to_string(),
                     });

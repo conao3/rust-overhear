@@ -144,6 +144,7 @@ pub struct DictEntry {
     /// 品詞。辞書によっては持たない (英和など)。
     pub pos: Option<Pos>,
     pub pos_label: Option<String>,
+    pub ipa_us: Option<String>,
     pub senses: Vec<DictSense>,
     pub source: String,
 }
@@ -190,6 +191,7 @@ impl From<core_dict::DictEntry> for DictEntry {
         Self {
             pos_label: e.pos.map(|p| p.label().to_string()),
             lemma: e.lemma,
+            ipa_us: e.ipa_us,
             pos: e.pos.map(Pos::from),
             senses: e.senses.into_iter().map(DictSense::from).collect(),
             source: e.source,

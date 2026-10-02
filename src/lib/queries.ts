@@ -114,6 +114,7 @@ export const LOOKUP = gql`
     lookup(word: $word) {
       lemma
       posLabel
+      ipaUs
       source
       senses {
         definition

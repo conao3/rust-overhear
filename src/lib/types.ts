@@ -67,6 +67,7 @@ export type DictEntry = {
   lemma: string;
   /** 品詞。辞書によっては持たない (英和など)。 */
   posLabel: string | null;
+  ipaUs: string | null;
   source: string;
   senses: DictSense[];
 };

@@ -144,6 +144,12 @@ export function WordPopover({
                         : entry.source}
                   </span>
                 </h3>
+                {entry.ipaUs && (
+                  <p className="mt-1 break-words" aria-label="米語の発音記号">
+                    <span className="mr-2 text-xs text-ink-muted">米 IPA</span>
+                    <span lang="en-US">{entry.ipaUs}</span>
+                  </p>
+                )}
                 <ol className="mt-1 list-decimal space-y-2 pl-5 text-ink-muted">
                   {entry.senses.map((sense, i) => (
                     <li key={i}>
