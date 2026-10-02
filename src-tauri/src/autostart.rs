@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// 自動起動で立ち上がったことを示す引数。スタジオを出さずに字幕バーだけで始める。
+/// 自動起動で立ち上がったことを示す引数。スタジオを出さずに始める。
 pub const AUTOSTART_ARG: &str = "--autostart";
 
 const FILE_NAME: &str = "overhear.desktop";

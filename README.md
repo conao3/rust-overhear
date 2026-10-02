@@ -8,6 +8,8 @@
 
 ### 1. リングバッファで「聞き直し」と sentence mining が成立する
 
+スタジオの「聞き直し用音声」は現在保持している音声の長さ / 保持上限を示し、5 秒ごとに更新する。起動後の累計時間や認識待ちの時間ではない。上限に達すると古い音声から上書きする。
+
 音声をキャプチャしている以上、直近 N 分の PCM をメモリに保持できる。字幕行をクリックすればその区間を再生し直せるし、Anki へ「文 + その区間の音声 + 単語 + 訳」を書き出せる。**字幕ファイルなしで mining が成立する**のはこの一点による。
 
 ### 2. two-pass ASR で「即応性」と「読める文」を両立する
@@ -57,13 +59,13 @@ PipeWire monitor
 | `Ctrl+Alt+O` | 字幕バーの表示切替 |
 | `Ctrl+Alt+S` | スタジオの表示切替 |
 
-字幕バーとスタジオの位置と大きさは `$XDG_CONFIG_HOME/com.conao3.overhear/.window-state.json` に残り、次の起動で戻る (`tauri-plugin-window-state`)。プラグインが書くのは正常終了のときだけなので、動かしたり大きさを変えたりしたら 0.5 秒後にも書く。字幕バーは画面下の中央へ置いてから、保存した位置があればそちらへ戻す。
+字幕バーとスタジオの位置と大きさは `$XDG_CONFIG_HOME/com.conao3.overhear/.window-state.json` に残り、次の起動で戻る (`tauri-plugin-window-state`)。プラグインが書くのは正常終了のときだけなので、動かしたり大きさを変えたりしたら 0.5 秒後にも書く。字幕バーは画面下の中央へ置いてから、保存した位置があればそちらへ戻す。字幕バーの表示・非表示は同じディレクトリの `caption-visible.json` に切り替えた直後に保存し、通常起動・自動起動とも前回の状態に戻す。初回は表示する。
 
 `overhear-server` が落ちたら、Tauri が起動し直す。ポートとトークンは起動ごとに変わるので、新しい接続情報を各ウィンドウの `sessionStorage` に入れてページを読み込み直す (初期化スクリプトは `sessionStorage` の値を優先して `window.__OVERHEAR__` にする)。60 秒に 5 回落ちたら起動し直すのをやめる。
 
 2 つ目を起動すると、そちらはすぐ終わり、動いているほうのスタジオが前に出る。`$XDG_RUNTIME_DIR/overhear.lock` を flock で掴めたほうが本体になり、`overhear.sock` で 2 つ目からの知らせを受ける。ホットキーを他のアプリが使っていて登録できないときは、警告を出して起動を続ける (トレイからは操作できる)。
 
-トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動では `--autostart` が付き、スタジオを出さずに字幕バーとトレイだけで始まる。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
+トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動では `--autostart` が付き、スタジオを出さずに始まる。字幕バーは前回の表示状態に従う。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
 
 Tauri が持つのはウィンドウとプロセス管理だけで、ドメインロジックは GraphQL サーバ側にある。Tauri の IPC ではなくローカル HTTP / WebSocket に口を開けているのは、字幕が subscription を本質とするデータであり、Apollo の `GraphQLWsLink` がそのまま使えるため。
 

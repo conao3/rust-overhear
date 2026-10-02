@@ -68,6 +68,7 @@ pub struct CaptureState {
     pub sample_rate: i32,
     pub ring_seconds: i32,
     pub captured_ms: i32,
+    pub buffered_ms: i32,
     pub asr_engine: String,
     pub target_lang: String,
     /// 聞き直しの再生中は入力を無音として扱っている。

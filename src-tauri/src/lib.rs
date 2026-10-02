@@ -10,6 +10,7 @@
 //! - `main`   — 履歴・語彙・設定を操作するスタジオ
 
 mod autostart;
+mod caption_visibility;
 mod server;
 mod single_instance;
 
@@ -35,6 +36,7 @@ fn build_caption_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> 
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
+        .visible(false)
         .resizable(true)
         .initialization_script(script)
         .build()?;
@@ -53,10 +55,12 @@ fn build_caption_window(app: &AppHandle, script: &str) -> Result<WebviewWindow> 
     if let Err(err) = window.restore_state(window_state_flags()) {
         tracing::warn!(%err, "字幕バーの位置を戻せなかった");
     }
+    window.show()?;
+    save_window_state_on_change(&window);
     Ok(window)
 }
 
-/// 残すのは位置と大きさだけ。表示状態は起動のしかた (自動起動か) で決める。
+/// 共通で復元するのは位置と大きさ。字幕バーの表示状態は別に復元する。
 fn window_state_flags() -> StateFlags {
     StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED
 }
@@ -111,17 +115,60 @@ fn build_studio_window(app: &AppHandle, script: &str, visible: bool) -> Result<W
 
 /// 表示中なら隠し、隠れていれば出す。
 fn toggle_window(app: &AppHandle, label: &str) {
-    let Some(window) = app.get_webview_window(label) else {
-        return;
-    };
-    match window.is_visible() {
-        Ok(true) => {
-            let _ = window.hide();
+    let handle = app.clone();
+    let label = label.to_owned();
+    if let Err(err) = app.run_on_main_thread(move || {
+        let window = match handle.get_webview_window(&label) {
+            Some(window) => window,
+            None if label == "caption" => {
+                let script = handle
+                    .state::<std::sync::Mutex<server::Announce>>()
+                    .lock()
+                    .unwrap()
+                    .init_script();
+                match build_caption_window(&handle, &script) {
+                    Ok(_) => {
+                        if let Err(err) = handle
+                            .state::<caption_visibility::CaptionVisibility>()
+                            .save(true)
+                        {
+                            tracing::warn!(%err, "字幕バーの表示状態を保存できなかった");
+                        }
+                    }
+                    Err(err) => tracing::warn!(%err, "字幕バーを表示できなかった"),
+                }
+                return;
+            }
+            None => return,
+        };
+        let caption =
+            (label == "caption").then(|| handle.state::<caption_visibility::CaptionVisibility>());
+        let visible = if let Some(state) = &caption {
+            Ok(state.visible())
+        } else {
+            window.is_visible()
+        };
+        let result = visible.and_then(|visible| {
+            if visible {
+                window.hide()?;
+            } else {
+                window.show()?;
+                let _ = window.set_focus();
+            }
+            Ok(!visible)
+        });
+        match result {
+            Ok(visible) => {
+                if let Some(state) = caption {
+                    if let Err(err) = state.save(visible) {
+                        tracing::warn!(%err, "字幕バーの表示状態を保存できなかった");
+                    }
+                }
+            }
+            Err(err) => tracing::warn!(%err, %label, "ウィンドウの表示を切り替えられなかった"),
         }
-        _ => {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
+    }) {
+        tracing::warn!(%err, "ウィンドウの表示切替を実行できなかった");
     }
 }
 
@@ -259,10 +306,16 @@ pub fn run() {
             tracing::info!(endpoint = %announce.graphql, "overhear-server に接続する");
             let handle = app.handle();
             let script = announce.init_script();
-            let caption = build_caption_window(handle, &script)?;
-            // ログイン時はスタジオを出さない。字幕バーとトレイだけで待つ。
+            let visibility =
+                caption_visibility::CaptionVisibility::load(handle.path().app_config_dir()?);
+            let show_caption = visibility.visible();
+            handle.manage(visibility);
+            handle.manage(std::sync::Mutex::new(announce));
+            if show_caption {
+                build_caption_window(handle, &script)?;
+            }
+            // ログイン時はスタジオを出さない。字幕バーは前回の表示状態に従う。
             let studio = build_studio_window(handle, &script, !from_autostart)?;
-            save_window_state_on_change(&caption);
             save_window_state_on_change(&studio);
             build_tray(handle)?;
 
@@ -270,6 +323,10 @@ pub fn run() {
             let reload_handle = handle.clone();
             supervisor.watch(move |announce| {
                 let script = announce.reconnect_script();
+                *reload_handle
+                    .state::<std::sync::Mutex<server::Announce>>()
+                    .lock()
+                    .unwrap() = announce.clone();
                 for label in ["caption", "main"] {
                     if let Some(window) = reload_handle.get_webview_window(label) {
                         if let Err(err) = window.eval(&script) {

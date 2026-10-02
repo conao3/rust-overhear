@@ -191,9 +191,12 @@ export function App() {
             <p className="text-xs text-ink-muted">
               {captureState.asrEngine}
               {captureState.refiner && ` + ${captureState.refiner}`} ·{" "}
-              {captureState.sampleRate} Hz · バッファ{" "}
-              {formatMs(captureState.capturedMs)} / {captureState.ringSeconds}{" "}
-              秒 · 訳先 {captureState.targetLang}
+              {captureState.sampleRate} Hz ·{" "}
+              <span title="聞き直し用に保持している音声の長さ。上限を超えた古い音声は消えます。5秒ごとに更新します。">
+                聞き直し用音声 {formatMs(captureState.bufferedMs)} /{" "}
+                {formatMs(captureState.ringSeconds * 1000)}
+              </span>{" "}
+              · 訳先 {captureState.targetLang}
               {captureState.translationBacklog > 0 &&
                 ` · 翻訳待ち ${captureState.translationBacklog}`}
               {!captureState.running && (

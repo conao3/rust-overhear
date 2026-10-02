@@ -42,6 +42,7 @@ export type CaptureState = {
   sampleRate: number;
   ringSeconds: number;
   capturedMs: number;
+  bufferedMs: number;
   asrEngine: string;
   targetLang: string;
   muted: boolean;

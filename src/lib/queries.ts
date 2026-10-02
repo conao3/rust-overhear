@@ -51,6 +51,7 @@ export const CAPTURE_STATE = gql`
       sampleRate
       ringSeconds
       capturedMs
+      bufferedMs
       asrEngine
       targetLang
       muted

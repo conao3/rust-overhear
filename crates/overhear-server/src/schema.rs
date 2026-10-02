@@ -22,16 +22,22 @@ fn engine(ctx: &Context<'_>) -> Arc<Overhear> {
 }
 
 fn capture_state(overhear: &Overhear) -> CaptureState {
-    let captured_ms = overhear
+    let (captured_ms, buffered_ms) = overhear
         .ring
         .lock()
-        .map(|r| r.total_ms() as i32)
-        .unwrap_or(0);
+        .map(|r| {
+            (
+                r.total_ms().min(i32::MAX as u64) as i32,
+                r.buffered_ms() as i32,
+            )
+        })
+        .unwrap_or((0, 0));
     CaptureState {
         running: overhear.is_capturing(),
         sample_rate: overhear.config.sample_rate as i32,
         ring_seconds: overhear.config.ring_seconds as i32,
         captured_ms,
+        buffered_ms,
         asr_engine: match overhear.config.engine {
             overhear_core::EngineChoice::April => "april".into(),
             overhear_core::EngineChoice::Mock => "mock".into(),

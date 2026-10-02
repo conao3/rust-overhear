@@ -40,6 +40,10 @@ impl RingBuffer {
         self.total * 1000 / self.sample_rate as u64
     }
 
+    pub fn buffered_ms(&self) -> u64 {
+        self.total.min(self.buf.len() as u64) * 1000 / self.sample_rate as u64
+    }
+
     pub fn push(&mut self, data: &[i16]) {
         let cap = self.buf.len();
         if cap == 0 {
@@ -149,6 +153,24 @@ mod tests {
         let got = ring.slice_ms(2000, 2500).unwrap();
         assert_eq!(got.len(), 500);
         assert_eq!(got[0], 2000);
+    }
+
+    #[test]
+    fn buffered_duration_stops_at_capacity_and_retains_latest_audio() {
+        let mut ring = RingBuffer::new(1000, 2);
+        assert_eq!(ring.buffered_ms(), 0);
+        ring.push(&vec![1; 1500]);
+        assert_eq!(ring.buffered_ms(), 1500);
+        ring.push(&vec![2; 1000]);
+        assert_eq!(ring.total_ms(), 2500);
+        assert_eq!(ring.buffered_ms(), 2000);
+        assert!(ring.slice_ms(0, 500).is_none());
+        assert_eq!(ring.slice_ms(500, 1500).unwrap(), vec![1; 1000]);
+        assert_eq!(ring.slice_ms(1500, 2500).unwrap(), vec![2; 1000]);
+        ring.push(&vec![3; 3000]);
+        assert_eq!(ring.total_ms(), 5500);
+        assert_eq!(ring.buffered_ms(), 2000);
+        assert_eq!(ring.slice_ms(3500, 5500).unwrap(), vec![3; 2000]);
     }
 
     #[test]
