@@ -8,7 +8,6 @@ description = "overhear desktop application"
 
 [lib]
 name = "overhear_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 # `tauri build` が自動で付けるのと同じもの。

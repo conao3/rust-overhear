@@ -110,6 +110,35 @@ home.packages = [ inputs.overhear.packages.${pkgs.stdenv.hostPlatform.system}.de
 
 `packages.default` はフロント (pnpm) と Rust をまとめてビルドし、april-asr のモデル・whisper のモデル・WordNet・英和辞書のパスと、子プロセスとして使う `pw-record` / `whisper-server` を実行ファイルに焼き込む。devShell の外でもそのまま動く。desktop entry とアイコンも入るのでメニューから起動できる。
 
+## 更新ビルドのキャッシュ
+
+`nix/package.nix` がビルドを分割する。`nix run .` / `nix build .` の使い方は同じ。
+
+- `rust-deps`: Crane で Rust の依存ライブラリとテスト用の成果物をキャッシュする。Cargo の依存・機能・ビルド設定やツールチェーンを変えたときに更新する。
+- `frontend`: TypeScript の型検査と Vite のビルド。Rust だけの変更では再利用する。pnpm の依存取得は `package.json` と `pnpm-lock.yaml` の変更で更新する。
+- `default`: キャッシュからアプリ本体を release ビルドし、ワークスペースの全テストを実行する。UI は従来どおり実行ファイルに埋め込む。
+
+README などの文書・作業ファイルはビルドの入力から除く。Linux のデスクトップ版では `rlib` と実行ファイルを生成し、使わない `staticlib` / `cdylib` は生成しない。音声認識の最適化レベルは変更していない。
+
+キャッシュが無い初回や依存更新時にはコンパイルが必要。利用中の字幕への負荷を抑えるため、ビルドは引き続き `nix build --option cores 4 --max-jobs 1 .`、更新・再起動は tmux `rust-overhear` セッションで行う。
+
+```sh
+python3 scripts/benchmark-build.py          # 文書・Rust・UI・Cargo 設定のキャッシュ境界を検証
+python3 scripts/benchmark-build.py --build  # Rust 変更と UI 変更のビルド時間も測定
+```
+
+検証用のソースコピーとログはメイン作業ツリーの `.claude-dev/scratch/build-cache/benchmark-*/` に保存する。作業中のコードを変更せず、各ビルドは 4 コア・同時 1 ジョブで実行する。
+
+2026-10-02、同じホスト・4 コアでの各 1 回の実測。変更前はコンパイル 11分41秒 + テスト用ビルドと実行 1分30秒。下表は改善後の `nix build` 起動から完了まで (全 49 テスト・パッケージ生成を含む)。依存キャッシュを事前に作成した状態で測る。
+
+| 変更                                 | 所要時間 |
+| ------------------------------------ | -------- |
+| Rust のソースに検証用の定数を追加    | 2分26秒  |
+| UI の CSS に検証用のプロパティを追加 | 2分45秒  |
+| 変更なし、全成果物を再利用           | 6秒      |
+
+測定スクリプトは毎回異なる値を追加し、前回の検証用パッケージがそのまま再利用されるのを避ける。README の変更で全成果物の derivation が不変なことと、Cargo のビルド設定の変更で依存キャッシュが更新されることも検証する。
+
 ## 使い方
 
 ```sh
