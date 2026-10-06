@@ -84,7 +84,7 @@ impl Default for RuntimeConfig {
 pub struct Services {
     pub translators: Arc<TranslatorRegistry>,
     /// two-pass ASR の後段。無ければ april の出力をそのまま確定とする。
-    pub whisper: Option<Arc<WhisperRefiner>>,
+    pub whisper_threads: Option<usize>,
     pub dictionaries: Arc<DictionaryRegistry>,
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
@@ -110,7 +110,11 @@ pub struct Overhear {
     pub segments: Arc<RwLock<VecDeque<Segment>>>,
     pub updates: broadcast::Sender<Segment>,
     pub translators: Arc<TranslatorRegistry>,
-    pub whisper: Option<Arc<WhisperRefiner>>,
+    whisper_threads: Option<usize>,
+    refinement_enabled: AtomicBool,
+    refinement_ready: AtomicBool,
+    refinement_error: RwLock<Option<String>>,
+    refine_task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub dictionaries: Arc<DictionaryRegistry>,
     pub vocab: Arc<VocabStore>,
     pub anki: Arc<AnkiConnect>,
@@ -239,7 +243,11 @@ impl Overhear {
             segments: Arc::clone(&segments),
             updates: updates.clone(),
             translators: services.translators,
-            whisper: services.whisper,
+            whisper_threads: services.whisper_threads,
+            refinement_enabled: AtomicBool::new(false),
+            refinement_ready: AtomicBool::new(false),
+            refinement_error: RwLock::new(None),
+            refine_task: tokio::sync::Mutex::new(None),
             dictionaries: services.dictionaries,
             vocab: services.vocab,
             anki: services.anki,
@@ -257,10 +265,6 @@ impl Overhear {
             audio_tx,
         });
 
-        if this.whisper.is_some() {
-            let this = Arc::clone(&this);
-            tokio::spawn(async move { this.run_refine_worker().await });
-        }
         {
             let this = Arc::clone(&this);
             tokio::spawn(async move { this.run_translation_worker().await });
@@ -311,8 +315,10 @@ impl Overhear {
         self.upsert(segment.clone());
         let _ = self.updates.send(segment.clone());
 
-        if is_final && !segment.source_text.is_empty() && self.whisper.is_some() {
-            self.refine_queue.push(segment.id);
+        if is_final && !segment.source_text.is_empty() {
+            self.refine_queue.push_if(segment.id, || {
+                self.refinement_enabled() && self.refinement_ready()
+            });
         }
     }
 
@@ -338,13 +344,74 @@ impl Overhear {
     ///
     /// 古い順に処理すると、溜まった分を捌き終えるまで新しい文が差し替えも
     /// 翻訳もされない。翻訳と同じく、いま表示している文を先に処理する。
-    async fn run_refine_worker(self: Arc<Self>) {
+    async fn run_refine_worker(self: Arc<Self>, threads: usize) -> Result<()> {
+        let whisper = WhisperRefiner::spawn_from_env(threads)?;
+        whisper.wait_ready(Duration::from_secs(60)).await?;
+        self.refinement_ready.store(true, Ordering::Relaxed);
         loop {
             let id = self.refine_queue.pop().await;
             self.refining.store(true, Ordering::Relaxed);
-            self.refine_segment(id).await;
+            self.refine_segment(id, &whisper).await;
             self.refining.store(false, Ordering::Relaxed);
         }
+    }
+
+    pub fn refinement_enabled(&self) -> bool {
+        self.refinement_enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn refinement_available(&self) -> bool {
+        self.whisper_threads.is_some()
+    }
+
+    pub fn refinement_ready(&self) -> bool {
+        self.refinement_ready.load(Ordering::Relaxed)
+    }
+
+    pub fn refinement_error(&self) -> Option<String> {
+        self.refinement_error
+            .read()
+            .ok()
+            .and_then(|error| error.clone())
+    }
+
+    pub async fn set_refinement_enabled(self: &Arc<Self>, enabled: bool) -> Result<()> {
+        let mut task = self.refine_task.lock().await;
+        if enabled && !self.refinement_available() {
+            anyhow::bail!("この起動設定では字幕の精度補正を利用できません");
+        }
+        self.settings.update(|s| s.refinement_enabled = enabled)?;
+        if enabled == self.refinement_enabled() {
+            return Ok(());
+        }
+        self.refinement_enabled.store(false, Ordering::Relaxed);
+        if let Some(worker) = task.take() {
+            worker.abort();
+            let _ = worker.await;
+        }
+        self.refine_queue.clear();
+        self.refining.store(false, Ordering::Relaxed);
+        self.refinement_ready.store(false, Ordering::Relaxed);
+        *self
+            .refinement_error
+            .write()
+            .map_err(|_| anyhow::anyhow!("lock poisoned"))? = None;
+        if let Some(threads) = self.whisper_threads.filter(|_| enabled) {
+            self.refinement_enabled.store(true, Ordering::Relaxed);
+            let this = Arc::clone(self);
+            *task = Some(tokio::spawn(async move {
+                if let Err(err) = Arc::clone(&this).run_refine_worker(threads).await {
+                    tracing::warn!(%err, "字幕の精度補正を開始できなかった");
+                    this.refinement_ready.store(false, Ordering::Relaxed);
+                    this.refining.store(false, Ordering::Relaxed);
+                    this.refine_queue.clear();
+                    if let Ok(mut error) = this.refinement_error.write() {
+                        *error = Some(err.to_string());
+                    }
+                }
+            }));
+        }
+        Ok(())
     }
 
     /// キャプチャが動いているか。
@@ -595,8 +662,11 @@ impl Overhear {
     /// april は低遅延だが全部大文字で句読点が無い。文が閉じた後に
     /// リングバッファの該当区間を whisper へ投げ、同じ id の更新として
     /// 配信し直す。
-    async fn refine_segment(self: &Arc<Self>, id: SegmentId) -> Option<Segment> {
-        let whisper = self.whisper.as_ref()?;
+    async fn refine_segment(
+        self: &Arc<Self>,
+        id: SegmentId,
+        whisper: &WhisperRefiner,
+    ) -> Option<Segment> {
         let segment = self.segment(id)?;
         if segment.asr_engine.contains("whisper") {
             return None; // 二重に掛けない
@@ -868,10 +938,22 @@ struct WorkQueue {
 
 impl WorkQueue {
     fn push(&self, id: SegmentId) {
+        self.push_if(id, || true);
+    }
+
+    fn push_if(&self, id: SegmentId, enabled: impl FnOnce() -> bool) {
         if let Ok(mut pending) = self.pending.lock() {
-            pending.push(id);
+            if enabled() {
+                pending.push(id);
+                self.wake.notify_one();
+            }
         }
-        self.wake.notify_one();
+    }
+
+    fn clear(&self) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.pending.clear();
+        }
     }
 
     async fn pop(&self) -> SegmentId {

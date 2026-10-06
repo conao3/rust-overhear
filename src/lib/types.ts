@@ -91,6 +91,10 @@ export type AnkiExportResult = {
 };
 
 export type Preferences = {
+  refinementEnabled: boolean;
+  refinementAvailable: boolean;
+  refinementReady: boolean;
+  refinementError: string | null;
   targetLang: string;
   ollamaModel: string;
   /** pull 済みの Ollama モデル。Ollama に繋がらなければ空。 */

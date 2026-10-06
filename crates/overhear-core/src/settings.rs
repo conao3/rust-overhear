@@ -20,6 +20,7 @@ pub struct Settings {
     pub target_lang: Option<String>,
     /// Ollama で使うモデル。
     pub ollama_model: Option<String>,
+    pub refinement_enabled: bool,
 }
 
 pub struct SettingsStore {
@@ -56,14 +57,16 @@ impl SettingsStore {
             .current
             .lock()
             .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
-        change(&mut current);
-        let text = serde_json::to_string_pretty(&*current)?;
+        let mut updated = current.clone();
+        change(&mut updated);
+        let text = serde_json::to_string_pretty(&updated)?;
         // 書きかけのファイルを残さないよう、一時ファイルから置き換える。
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, text + "\n")
             .with_context(|| format!("{} に書けない", tmp.display()))?;
         std::fs::rename(&tmp, &self.path)
             .with_context(|| format!("{} に書けない", self.path.display()))?;
+        *current = updated;
         Ok(())
     }
 }
@@ -97,5 +100,28 @@ mod tests {
         let dir = tempdir::TempDir::new("overhear-settings").unwrap();
         std::fs::write(dir.path().join("settings.json"), "{ not json").unwrap();
         assert!(SettingsStore::open(dir.path()).is_err());
+    }
+
+    #[test]
+    fn refinement_defaults_off_and_persists_both_choices() {
+        let dir = tempdir::TempDir::new("overhear-refinement").unwrap();
+        std::fs::write(dir.path().join("settings.json"), r#"{"translator":"none"}"#).unwrap();
+        let store = SettingsStore::open(dir.path()).unwrap();
+        assert!(!store.get().refinement_enabled);
+        for enabled in [true, false] {
+            store.update(|s| s.refinement_enabled = enabled).unwrap();
+            let reopened = SettingsStore::open(dir.path()).unwrap();
+            assert_eq!(reopened.get().refinement_enabled, enabled);
+            assert_eq!(reopened.get().translator.as_deref(), Some("none"));
+        }
+    }
+
+    #[test]
+    fn failed_save_preserves_current_settings() {
+        let dir = tempdir::TempDir::new("overhear-settings-failure").unwrap();
+        let store = SettingsStore::open(dir.path()).unwrap();
+        std::fs::create_dir(dir.path().join("settings.json.tmp")).unwrap();
+        assert!(store.update(|s| s.refinement_enabled = true).is_err());
+        assert!(!store.get().refinement_enabled);
     }
 }

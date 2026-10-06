@@ -6,7 +6,7 @@
  * サーバからは「入っているか」しか返らない。
  */
 import { useMutation, useQuery } from "@apollo/client/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
   Input,
@@ -17,10 +17,13 @@ import {
   Select,
   SelectValue,
   TextField,
+  Switch,
 } from "react-aria-components";
 
 import {
   PREFERENCES,
+  CAPTURE_STATE,
+  SET_REFINEMENT_ENABLED,
   SET_API_KEY,
   SET_OLLAMA_MODEL,
   SET_TARGET_LANG,
@@ -144,7 +147,16 @@ function ApiKeyRow({
 }
 
 export function SettingsPanel() {
-  const { data } = useQuery<{ preferences: Preferences }>(PREFERENCES);
+  const { data, startPolling, stopPolling } = useQuery<{
+    preferences: Preferences;
+  }>(PREFERENCES);
+  const [
+    setRefinementEnabled,
+    { loading: savingRefinement, error: refinementMutationError },
+  ] = useMutation(SET_REFINEMENT_ENABLED, {
+    refetchQueries: [PREFERENCES, CAPTURE_STATE],
+    awaitRefetchQueries: true,
+  });
   // 変えたら設定とエンジンの利用可否を取り直す。
   const refresh = { refetchQueries: [PREFERENCES, TRANSLATION_ENGINES] };
   const [setTargetLang] = useMutation(SET_TARGET_LANG, refresh);
@@ -153,6 +165,15 @@ export function SettingsPanel() {
   const [message, setMessage] = useState<string | null>(null);
 
   const prefs = data?.preferences;
+  const startingRefinement =
+    prefs?.refinementEnabled &&
+    !prefs.refinementReady &&
+    !prefs.refinementError;
+  useEffect(() => {
+    if (startingRefinement) startPolling(1000);
+    else stopPolling();
+    return stopPolling;
+  }, [startingRefinement, startPolling, stopPolling]);
   if (!prefs) {
     return <p className="text-sm text-ink-muted">読み込み中…</p>;
   }
@@ -183,6 +204,52 @@ export function SettingsPanel() {
 
   return (
     <div className="flex flex-col gap-6">
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold">音声認識</h2>
+        <Switch
+          isSelected={prefs.refinementEnabled}
+          isDisabled={savingRefinement || !prefs.refinementAvailable}
+          onChange={(enabled) =>
+            void setRefinementEnabled({ variables: { enabled } }).catch(
+              () => {},
+            )
+          }
+          aria-describedby="refinement-description"
+          className="group flex w-fit cursor-pointer items-center gap-3 text-sm outline-none data-[disabled]:cursor-default data-[disabled]:opacity-50"
+        >
+          <span className="flex h-5 w-9 shrink-0 items-center rounded-full bg-white/20 p-0.5 group-data-[selected]:bg-accent group-data-[focus-visible]:ring-2 group-data-[focus-visible]:ring-accent group-data-[focus-visible]:ring-offset-2 group-data-[focus-visible]:ring-offset-surface">
+            <span className="h-4 w-4 rounded-full bg-white group-data-[selected]:translate-x-4" />
+          </span>
+          字幕の精度補正
+          <span className="text-xs text-ink-muted">
+            {prefs.refinementEnabled ? "オン" : "オフ"}
+          </span>
+        </Switch>
+        <p
+          id="refinement-description"
+          className="text-xs leading-relaxed text-ink-muted"
+        >
+          発話後に音声をもう一度解析して、字幕の単語や句読点を補正します。
+          オンにするとCPU使用量が増えます。オフでも即時字幕・辞書・聞き直しは使えます。
+          設定は次回の起動にも引き継がれます。
+        </p>
+        {startingRefinement && (
+          <p role="status" className="text-xs text-ink-muted">
+            補正用のモデルを読み込み中…
+          </p>
+        )}
+        {!prefs.refinementAvailable && (
+          <p className="text-xs text-ink-muted">
+            この起動設定では精度補正を利用できません。
+          </p>
+        )}
+        {(refinementMutationError || prefs.refinementError) && (
+          <p role="alert" className="text-xs text-amber-300">
+            精度補正を変更・実行できませんでした:{" "}
+            {refinementMutationError?.message ?? prefs.refinementError}
+          </p>
+        )}
+      </section>
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold">翻訳</h2>
         <Picker

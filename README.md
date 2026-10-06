@@ -14,9 +14,9 @@ Linux の聞き直しは WebKitGTK と GStreamer で WAV を再生する。Nix �
 
 音声をキャプチャしている以上、直近 N 分の PCM をメモリに保持できる。字幕行をクリックすればその区間を再生し直せるし、Anki へ「文 + その区間の音声 + 単語 + 訳」を書き出せる。**字幕ファイルなしで mining が成立する**のはこの一点による。
 
-### 2. two-pass ASR で「即応性」と「読める文」を両立する
+### 2. 即時字幕と任意の精度補正
 
-april-asr が interim を即座に出し、文が閉じたらリングバッファの該当区間を whisper.cpp に投げて確定文へ差し替える。差し替えは **同じ id の segment の更新**として GraphQL subscription に流れるので、フロントは Apollo の正規化キャッシュで受けるだけでよい。
+april-asr が即時字幕を出す。設定の「字幕の精度補正」をオンにすると、発話後にリングバッファの該当区間を whisper.cpp で再認識して字幕の単語や句読点を補正する。CPU 使用量を抑えるため、精度補正の初期値はオフ。選択は次回起動にも引き継ぐ。オフにすると、処理中の再認識と待ち行列を停止し、補正用の子プロセスを終了する。差し替えは **同じ id の segment の更新**として GraphQL subscription に流れるので、フロントは Apollo の正規化キャッシュで受けるだけでよい。
 
 april の出力は全部大文字なので、whisper で差し替わる前の行 (と whisper に掛けない短い行・古い行) は表示だけ小文字にし、文頭と一人称の I を大文字にする。固有名詞は小文字のままになる。辞書は元の語で引く。
 
@@ -77,7 +77,7 @@ Tauri が持つのはウィンドウとプロセス管理だけで、ドメイ�
 
 - Linux + PipeWire (`pw-record`)
 - april-asr の共有ライブラリとモデル
-- whisper.cpp (`whisper-server`) と ggml モデル
+- whisper.cpp (`whisper-server`) と ggml モデル (精度補正を使う場合)
 - WordNet 3.0 (英英辞書) と ejdict-hand (英和辞書)
 - Anki + AnkiConnect アドオン (カード書き出しを使う場合のみ)
 
@@ -85,7 +85,7 @@ Tauri が持つのはウィンドウとプロセス管理だけで、ドメイ�
 
 WordNet も nixpkgs の `wordnet` に `dict/` が入っているため、追加のダウンロードは要らない (`WORDNET_DICT_DIR`)。英和の ejdict-hand はパブリックドメインのタブ区切りテキストを flake が `fetchzip` で固定する (`EJDICT_PATH`)。
 
-whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入っており、モデル (`ggml-base.en.bin`) は flake が `fetchurl` で固定する (`WHISPER_MODEL_PATH`)。`whisper-server` は子プロセスとして 1 度だけ起動するので、モデルの読み込みは 1 回で済む。`--no-whisper` で後段を切れる。
+whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入っており、モデル (`ggml-base.en.bin`) は flake が `fetchurl` で固定する (`WHISPER_MODEL_PATH`)。`whisper-server` は精度補正をオンにしている間だけ子プロセスとして動作し、モデルをメモリに保持する。`--no-whisper` で起動すると精度補正の切り替えを無効にする。
 
 語彙と音声クリップは `$XDG_DATA_HOME/overhear` (既定 `~/.local/share/overhear`) に置く。`OVERHEAR_DATA_DIR` で変えられる。
 

@@ -44,7 +44,9 @@ fn capture_state(overhear: &Overhear) -> CaptureState {
         },
         target_lang: overhear.target_lang(),
         muted: overhear.is_muted(),
-        refiner: overhear.whisper.as_ref().map(|_| "whisper.cpp".to_string()),
+        refiner: overhear
+            .refinement_ready()
+            .then(|| "whisper.cpp".to_string()),
         capture_target: overhear.capture_target(),
         translation_backlog: overhear.translation_backlog() as i32,
     }
@@ -148,6 +150,10 @@ const API_KEY_ENGINES: &[&str] = &["deepl", "google"];
 async fn preferences(overhear: &Overhear) -> Preferences {
     let ollama = overhear.translators.ollama();
     Preferences {
+        refinement_enabled: overhear.refinement_enabled(),
+        refinement_available: overhear.refinement_available(),
+        refinement_ready: overhear.refinement_ready(),
+        refinement_error: overhear.refinement_error(),
         target_lang: overhear.target_lang(),
         ollama_model: ollama.model(),
         ollama_models: ollama.installed_models().await.unwrap_or_default(),
@@ -165,6 +171,19 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
+    async fn set_refinement_enabled(
+        &self,
+        ctx: &Context<'_>,
+        enabled: bool,
+    ) -> async_graphql::Result<Preferences> {
+        let overhear = engine(ctx);
+        overhear
+            .set_refinement_enabled(enabled)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(preferences(&overhear).await)
+    }
+
     /// 拾う先を切り替える。deviceId を省くと既定シンクに戻る。
     async fn set_capture_device(
         &self,

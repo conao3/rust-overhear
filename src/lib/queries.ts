@@ -207,6 +207,10 @@ export const SET_CAPTURE_DEVICE = gql`
 `;
 
 const PREFERENCE_FIELDS = `
+  refinementEnabled
+  refinementAvailable
+  refinementReady
+  refinementError
   targetLang
   ollamaModel
   ollamaModels
@@ -244,6 +248,14 @@ export const SET_OLLAMA_MODEL = gql`
 export const SET_API_KEY = gql`
   mutation SetApiKey($engineId: ID!, $key: String) {
     setApiKey(engineId: $engineId, key: $key) {
+      ${PREFERENCE_FIELDS}
+    }
+  }
+`;
+
+export const SET_REFINEMENT_ENABLED = gql`
+  mutation SetRefinementEnabled($enabled: Boolean!) {
+    setRefinementEnabled(enabled: $enabled) {
       ${PREFERENCE_FIELDS}
     }
   }

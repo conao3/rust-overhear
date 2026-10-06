@@ -269,6 +269,10 @@ impl From<core_devices::AudioDevice> for AudioDevice {
 /// スタジオの設定タブで変えられる値。
 #[derive(SimpleObject)]
 pub struct Preferences {
+    pub refinement_enabled: bool,
+    pub refinement_available: bool,
+    pub refinement_ready: bool,
+    pub refinement_error: Option<String>,
     pub target_lang: String,
     pub ollama_model: String,
     /// pull 済みの Ollama モデル。Ollama に繋がらなければ空。

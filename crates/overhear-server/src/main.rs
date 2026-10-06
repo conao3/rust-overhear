@@ -21,7 +21,6 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use clap::Parser;
 use overhear_core::anki::AnkiConnect;
-use overhear_core::asr::whisper::WhisperRefiner;
 use overhear_core::dict::DictionaryRegistry;
 use overhear_core::pipeline::Services;
 use overhear_core::ring::encode_wav;
@@ -250,31 +249,6 @@ async fn main() -> Result<()> {
     let vocab = VocabStore::open(&data_dir).context("語彙ストアを開けない")?;
     tracing::info!(saved = vocab.count().unwrap_or(0), "語彙ストアを読み込んだ");
 
-    // 後段が用意できなければ april の出力をそのまま確定として使う。
-    let whisper = if args.no_whisper {
-        None
-    } else {
-        match WhisperRefiner::spawn_from_env(args.whisper_threads) {
-            Ok(refiner) => {
-                let refiner = Arc::new(refiner);
-                match refiner.wait_ready(std::time::Duration::from_secs(60)).await {
-                    Ok(()) => {
-                        tracing::info!("two-pass ASR の後段に whisper.cpp を使う");
-                        Some(refiner)
-                    }
-                    Err(err) => {
-                        tracing::warn!(%err, "whisper-server が応答しないので後段なしで続ける");
-                        None
-                    }
-                }
-            }
-            Err(err) => {
-                tracing::warn!(%err, "whisper を使えないので後段なしで続ける");
-                None
-            }
-        }
-    };
-
     let translators = Arc::new(registry);
     // 最初の発話を待たせないよう、裏でモデルを載せておく。
     tokio::spawn({
@@ -282,9 +256,10 @@ async fn main() -> Result<()> {
         async move { translators.warm_up_default().await }
     });
 
+    let refinement_enabled = settings.get().refinement_enabled && !args.no_whisper;
     let services = Services {
         translators,
-        whisper,
+        whisper_threads: (!args.no_whisper).then_some(args.whisper_threads),
         dictionaries: Arc::new(dictionaries),
         vocab: Arc::new(vocab),
         anki: Arc::new(AnkiConnect::from_env()),
@@ -293,6 +268,9 @@ async fn main() -> Result<()> {
     };
 
     let overhear = Overhear::start(config, services).context("パイプラインの起動")?;
+    if refinement_enabled {
+        overhear.set_refinement_enabled(true).await?;
+    }
 
     let schema = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(Arc::clone(&overhear))
