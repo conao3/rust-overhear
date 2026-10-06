@@ -97,6 +97,7 @@ export function App() {
 
   const segments = useMemo(() => segmentsData?.segments ?? [], [segmentsData]);
   const latest = segments.at(-1) ?? null;
+  const history = useMemo(() => segments.slice(0, -1).reverse(), [segments]);
   const engines = engineData?.translationEngines ?? [];
   const engineId = engines.find((e) => e.isDefault)?.id ?? null;
   const canTranslate = engineId !== null && engineId !== "none";
@@ -131,6 +132,19 @@ export function App() {
   const captureState = stateData?.captureState;
   const vocab = vocabData?.vocab ?? [];
   const devices = deviceData?.audioDevices ?? [];
+
+  const onPlay = useCallback(
+    (segment: Segment) =>
+      void play(segment.audioUrl, segment.endMs - segment.startMs),
+    [play],
+  );
+
+  const onRetranslate = useCallback(
+    (segment: Segment) => {
+      void retranslate({ variables: { segmentId: segment.id, engineId } });
+    },
+    [retranslate, engineId],
+  );
 
   const onSaveWord = useCallback(
     async (segment: Segment, token: Token) => {
@@ -245,7 +259,7 @@ export function App() {
       <Tabs className="flex min-h-0 flex-1 flex-col gap-3">
         <TabList aria-label="表示の切り替え" className="flex gap-1">
           {[
-            { id: "history", label: `履歴 (${segments.length})` },
+            { id: "history", label: `履歴 (${history.length})` },
             { id: "vocab", label: `語彙 (${vocab.length})` },
             { id: "settings", label: "設定" },
           ].map((tab) => (
@@ -276,20 +290,14 @@ export function App() {
                 ? Math.max(0, captureState.capturedMs - captureState.bufferedMs)
                 : 0
             }
-            segments={[...segments].reverse()}
-            onPlay={(segment) =>
-              void play(segment.audioUrl, segment.endMs - segment.startMs)
-            }
+            segments={history}
+            onPlay={onPlay}
             onTranslate={translation.request}
             isTranslating={translation.isPending}
             canTranslate={canTranslate}
             onSaveWord={onSaveWord}
             savingWord={savingWord}
-            onRetranslate={(segment) => {
-              void retranslate({
-                variables: { segmentId: segment.id, engineId },
-              });
-            }}
+            onRetranslate={onRetranslate}
           />
         </TabPanel>
 
