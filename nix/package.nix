@@ -99,7 +99,7 @@ let
       buildPhaseCargoCommand = "cargoWithProfile build ${commonArgs.cargoExtraArgs}";
     }
   );
-  package = craneLib.buildPackage (
+  unwrappedPackage = craneLib.buildPackage (
     commonArgs
     // {
       inherit cargoArtifacts;
@@ -144,6 +144,33 @@ let
       };
     }
   );
+  playbackPluginPath = lib.makeSearchPath "lib/gstreamer-1.0" (
+    with pkgs.gst_all_1;
+    [
+      gstreamer.out
+      gst-plugins-base
+      gst-plugins-good
+      gst-plugins-bad
+    ]
+  );
+  package = pkgs.symlinkJoin {
+    inherit (unwrappedPackage) name meta;
+    paths = [ unwrappedPackage ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      wrapProgram $out/bin/overhear \
+        --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "${playbackPluginPath}"
+      export GST_PLUGIN_SYSTEM_PATH_1_0="${playbackPluginPath}"
+      export GST_PLUGIN_PATH_1_0=
+      export GST_REGISTRY_1_0="$TMPDIR/gstreamer-registry.bin"
+      for element in typefind queue fakesink appsink autoaudiosink pulsesink wavparse audioconvert audioresample decodebin playbin fakevideosink webvttenc; do
+        ${lib.getBin pkgs.gst_all_1.gstreamer}/bin/gst-inspect-1.0 "$element" > /dev/null
+        echo "GStreamer playback element: $element"
+      done
+    '';
+    passthru = { inherit (unwrappedPackage) cargoArtifacts frontend; };
+  };
+
 in
 {
   default = package;

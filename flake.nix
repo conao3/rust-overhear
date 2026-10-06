@@ -116,6 +116,10 @@
               gtk3
               libsoup_3
               glib-networking
+              gst_all_1.gstreamer
+              gst_all_1.gst-plugins-base
+              gst_all_1.gst-plugins-good
+              gst_all_1.gst-plugins-bad
               librsvg
               libayatana-appindicator # トレイアイコン (dlopen される)
             ];
