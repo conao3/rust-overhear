@@ -302,3 +302,7 @@ whisper に渡す区間は、april のトークン時刻から前 200ms・後ろ
 ## ライセンス
 
 GPL-3.0-only。april-asr が GPL-3.0 であり、`libaprilasr.so` をリンクするため。
+
+## 検証ツール
+
+認証付き字幕の購読・集計と AnkiConnect モックの使い方は [scripts/README.md](scripts/README.md) を参照する。
