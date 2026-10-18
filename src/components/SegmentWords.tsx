@@ -31,16 +31,20 @@ export const SegmentWords = memo(function SegmentWords({
 
   return (
     <>
-      {displayed.tokens.map((token, i) => {
-        const ruby =
-          settings?.enabled &&
-          token.ruby &&
-          token.ruby.rank > settings.knownWords
-            ? token.ruby
-            : null;
-        return (
-          <span key={token.index}>
+      <span
+        className="segment-words"
+        data-ruby-enabled={settings?.enabled ?? true}
+      >
+        {displayed.tokens.map((token, i) => {
+          const ruby =
+            settings?.enabled &&
+            token.ruby &&
+            token.ruby.rank > settings.knownWords
+              ? token.ruby
+              : null;
+          return (
             <button
+              key={token.index}
               type="button"
               data-ruby-level={
                 ruby
@@ -63,18 +67,20 @@ export const SegmentWords = memo(function SegmentWords({
                 setSelected({ segment: displayed, token, label: words[i] });
               }}
             >
-              {ruby ? (
+              {(settings?.enabled ?? true) ? (
                 <ruby>
-                  {words[i]}
-                  <rt aria-hidden="true">{ruby.text}</rt>
+                  <span className="word-surface">{words[i]}</span>
+                  <rt aria-hidden="true" title={ruby?.text}>
+                    {ruby?.text}
+                  </rt>
                 </ruby>
               ) : (
                 words[i]
               )}
-            </button>{" "}
-          </span>
-        );
-      })}
+            </button>
+          );
+        })}
+      </span>
       {selected && (
         <WordPopover
           token={selected.token}

@@ -65,17 +65,15 @@ export function CaptionWindow() {
         <div className="h-1 w-10 rounded-full bg-white/20" />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-4 text-center">
-        <div className="my-auto flex w-full flex-col items-center gap-1">
-          {previous && (
-            <p className="max-w-full truncate text-sm text-ink-muted/50">
-              {displayText(previous)}
-            </p>
-          )}
+      <div className="caption-content flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-4">
+        <div className="flex w-full shrink-0 flex-col gap-1">
+          <p className="h-5 w-full shrink-0 truncate text-sm text-ink-muted/50">
+            {previous ? displayText(previous) : ""}
+          </p>
 
           {current ? (
             <>
-              <p className="max-w-full text-2xl leading-snug font-medium text-balance">
+              <p className="w-full text-2xl leading-snug font-medium">
                 <SegmentWords segment={current} />
               </p>
               {translation ? (

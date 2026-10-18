@@ -39,16 +39,42 @@ body {
 [data-ruby-level="advanced"] {
   color: #ffcf80;
 }
-[data-ruby-level] {
+.segment-words {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.15em 0.25em;
+  text-align: left;
+}
+.segment-words > button {
+  max-width: 100%;
+  min-width: 0;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
-[data-ruby-level] ruby {
-  ruby-position: over;
-  ruby-align: center;
+.segment-words[data-ruby-enabled="true"] ruby {
+  display: grid;
+  grid-template-rows: calc(var(--ruby-size) * 1.3 + 0.15em) auto;
+  grid-template-columns: minmax(0, 1fr);
 }
-[data-ruby-level] rt {
+.segment-words .word-surface {
+  grid-row: 2;
+}
+.segment-words rt {
+  display: block;
+  grid-row: 1;
+  align-self: center;
+  justify-self: center;
+  max-width: min(100%, 8em);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: var(--ruby-size);
   line-height: 1.3;
   color: var(--color-ink);
   font-weight: 400;
+}
+.caption-content {
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
 }
