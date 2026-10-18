@@ -5,6 +5,7 @@ export type Token = {
   surface: string;
   startMs: number;
   sentenceEnd: boolean;
+  ruby: { text: string; rank: number } | null;
 };
 
 export type Translation = {
@@ -100,4 +101,10 @@ export type Preferences = {
   /** pull 済みの Ollama モデル。Ollama に繋がらなければ空。 */
   ollamaModels: string[];
   apiKeys: { engineId: string; configured: boolean }[];
+};
+
+export type RubySettings = {
+  enabled: boolean;
+  knownWords: number;
+  size: number;
 };

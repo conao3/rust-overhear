@@ -17,6 +17,7 @@ let
     lib.fileset.unions [
       ../Cargo.toml
       ../Cargo.lock
+      ../crates/overhear-core/data
       (lib.fileset.fileFilter (file: file.hasExt "rs" || file.name == "Cargo.toml") ../crates)
       (lib.fileset.fileFilter (file: file.hasExt "rs" || file.name == "Cargo.toml") ../src-tauri)
       ../src-tauri/tauri.conf.json

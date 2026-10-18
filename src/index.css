@@ -29,3 +29,26 @@ body {
   height: 100%;
   max-height: inherit;
 }
+
+[data-ruby-level="common"] {
+  color: #9cffcd;
+}
+[data-ruby-level="intermediate"] {
+  color: #c9a5df;
+}
+[data-ruby-level="advanced"] {
+  color: #ffcf80;
+}
+[data-ruby-level] {
+  line-height: 1.5;
+}
+[data-ruby-level] ruby {
+  ruby-position: over;
+  ruby-align: center;
+}
+[data-ruby-level] rt {
+  font-size: var(--ruby-size);
+  line-height: 1.3;
+  color: var(--color-ink);
+  font-weight: 400;
+}

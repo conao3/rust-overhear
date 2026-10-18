@@ -65,36 +65,38 @@ export function CaptionWindow() {
         <div className="h-1 w-10 rounded-full bg-white/20" />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 pb-4 text-center">
-        {previous && (
-          <p className="max-w-full truncate text-sm text-ink-muted/50">
-            {displayText(previous)}
-          </p>
-        )}
-
-        {current ? (
-          <>
-            <p className="max-w-full text-2xl leading-snug font-medium text-balance">
-              <SegmentWords segment={current} />
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-4 text-center">
+        <div className="my-auto flex w-full flex-col items-center gap-1">
+          {previous && (
+            <p className="max-w-full truncate text-sm text-ink-muted/50">
+              {displayText(previous)}
             </p>
-            {translation ? (
-              <p className="max-w-full truncate text-base text-ink-muted">
-                {translation.text}
+          )}
+
+          {current ? (
+            <>
+              <p className="max-w-full text-2xl leading-snug font-medium text-balance">
+                <SegmentWords segment={current} />
               </p>
-            ) : (
-              <TranslateAction
-                segment={current}
-                translating={translationRequests.isPending(current)}
-                canTranslate={canTranslate}
-                onTranslate={translationRequests.request}
-              />
-            )}
-          </>
-        ) : (
-          <p className="text-center text-sm text-ink-muted">
-            音声を待っている…
-          </p>
-        )}
+              {translation ? (
+                <p className="max-w-full truncate text-base text-ink-muted">
+                  {translation.text}
+                </p>
+              ) : (
+                <TranslateAction
+                  segment={current}
+                  translating={translationRequests.isPending(current)}
+                  canTranslate={canTranslate}
+                  onTranslate={translationRequests.request}
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-center text-sm text-ink-muted">
+              音声を待っている…
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

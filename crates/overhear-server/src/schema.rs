@@ -8,11 +8,11 @@ use std::sync::Arc;
 use async_graphql::{Context, ID, Object, Schema, Subscription};
 use futures_util::{Stream, StreamExt};
 use overhear_core::Overhear;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{BroadcastStream, WatchStream};
 
 use crate::types::{
-    AnkiExportResult, ApiKeyState, AudioDevice, CaptureState, DictEntry, Preferences, Segment,
-    TranslationEngineInfo, VocabItem,
+    AnkiExportResult, ApiKeyState, AudioDevice, CaptureState, DictEntry, Preferences, RubySettings,
+    Segment, TranslationEngineInfo, VocabItem,
 };
 
 pub type OverhearSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
@@ -56,6 +56,10 @@ pub struct QueryRoot;
 
 #[Object]
 impl QueryRoot {
+    async fn ruby_settings(&self, ctx: &Context<'_>) -> RubySettings {
+        (*engine(ctx).ruby_updates.borrow()).into()
+    }
+
     /// 直近の segment を古い順に返す。
     async fn segments(&self, ctx: &Context<'_>, limit: Option<i32>) -> Vec<Segment> {
         let overhear = engine(ctx);
@@ -171,6 +175,25 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
+    async fn set_ruby_settings(
+        &self,
+        ctx: &Context<'_>,
+        enabled: bool,
+        known_words: i32,
+        size: i32,
+    ) -> async_graphql::Result<RubySettings> {
+        let overhear = engine(ctx);
+        let ruby = overhear_core::settings::RubySettings {
+            enabled,
+            known_words,
+            size,
+        };
+        overhear
+            .set_ruby_settings(ruby)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(ruby.into())
+    }
+
     async fn set_refinement_enabled(
         &self,
         ctx: &Context<'_>,
@@ -353,6 +376,10 @@ pub struct SubscriptionRoot;
 
 #[Subscription]
 impl SubscriptionRoot {
+    async fn ruby_settings_updates(&self, ctx: &Context<'_>) -> impl Stream<Item = RubySettings> {
+        WatchStream::new(engine(ctx).ruby_updates.subscribe()).map(RubySettings::from)
+    }
+
     /// 新規 segment と差し替えの両方がここに流れる。
     async fn segment_updates(&self, ctx: &Context<'_>) -> impl Stream<Item = Segment> {
         let overhear = engine(ctx);

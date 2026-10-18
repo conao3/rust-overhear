@@ -21,6 +21,39 @@ pub struct Settings {
     /// Ollama で使うモデル。
     pub ollama_model: Option<String>,
     pub refinement_enabled: bool,
+    pub ruby: RubySettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RubySettings {
+    pub enabled: bool,
+    pub known_words: i32,
+    pub size: i32,
+}
+
+impl Default for RubySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            known_words: 1000,
+            size: 75,
+        }
+    }
+}
+
+impl RubySettings {
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            (0..=10000).contains(&self.known_words),
+            "単語レベルは 0〜10000 の範囲で指定してください"
+        );
+        anyhow::ensure!(
+            (40..=150).contains(&self.size),
+            "ルビのサイズは 40〜150% の範囲で指定してください"
+        );
+        Ok(())
+    }
 }
 
 pub struct SettingsStore {
@@ -33,7 +66,7 @@ impl SettingsStore {
         let data_dir = data_dir.as_ref();
         std::fs::create_dir_all(data_dir).context("データディレクトリの作成")?;
         let path = data_dir.join("settings.json");
-        let current = if path.exists() {
+        let current: Settings = if path.exists() {
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("{} を読めない", path.display()))?;
             serde_json::from_str(&text)
@@ -41,6 +74,7 @@ impl SettingsStore {
         } else {
             Settings::default()
         };
+        current.ruby.validate()?;
         Ok(Self {
             path,
             current: Mutex::new(current),
@@ -59,6 +93,7 @@ impl SettingsStore {
             .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
         let mut updated = current.clone();
         change(&mut updated);
+        updated.ruby.validate()?;
         let text = serde_json::to_string_pretty(&updated)?;
         // 書きかけのファイルを残さないよう、一時ファイルから置き換える。
         let tmp = self.path.with_extension("json.tmp");
@@ -93,6 +128,29 @@ mod tests {
             reopened.get().capture_target.as_deref(),
             Some("alsa_output.usb")
         );
+    }
+
+    #[test]
+    fn ruby_settings_persist_and_reject_invalid_ranges() {
+        let dir = tempdir::TempDir::new("overhear-ruby-settings").unwrap();
+        std::fs::write(dir.path().join("settings.json"), r#"{"translator":"none"}"#).unwrap();
+        let store = SettingsStore::open(dir.path()).unwrap();
+        assert_eq!(store.get().ruby, RubySettings::default());
+        let ruby = RubySettings {
+            enabled: false,
+            known_words: 5000,
+            size: 110,
+        };
+        store.update(|s| s.ruby = ruby).unwrap();
+        assert_eq!(SettingsStore::open(dir.path()).unwrap().get().ruby, ruby);
+        for size in [39, 151] {
+            assert!(store.update(|s| s.ruby.size = size).is_err());
+        }
+        for known_words in [-1, 10001] {
+            assert!(store.update(|s| s.ruby.known_words = known_words).is_err());
+        }
+        assert_eq!(store.get().ruby, ruby);
+        assert_eq!(SettingsStore::open(dir.path()).unwrap().get().ruby, ruby);
     }
 
     #[test]

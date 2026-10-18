@@ -1,6 +1,6 @@
 //! GraphQL のスキーマ型。core のドメイン型を射影する。
 
-use async_graphql::{Enum, ID, SimpleObject};
+use async_graphql::{ComplexObject, Context, Enum, ID, SimpleObject};
 use overhear_core::devices as core_devices;
 use overhear_core::dict as core_dict;
 use overhear_core::model as core;
@@ -17,12 +17,51 @@ pub enum SegmentStatus {
 }
 
 #[derive(SimpleObject, Clone)]
+#[graphql(complex)]
 pub struct Token {
     pub index: i32,
     pub surface: String,
     pub start_ms: i32,
     pub word_boundary: bool,
     pub sentence_end: bool,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct WordRuby {
+    pub text: String,
+    pub rank: i32,
+}
+
+#[ComplexObject]
+impl Token {
+    async fn ruby(&self, ctx: &Context<'_>) -> Option<WordRuby> {
+        let overhear = ctx.data_unchecked::<std::sync::Arc<overhear_core::Overhear>>();
+        let dictionaries = &overhear.dictionaries;
+        dictionaries
+            .ruby
+            .lookup(dictionaries, &self.surface)
+            .map(|ruby| WordRuby {
+                text: ruby.text,
+                rank: ruby.rank,
+            })
+    }
+}
+
+#[derive(SimpleObject)]
+pub struct RubySettings {
+    pub enabled: bool,
+    pub known_words: i32,
+    pub size: i32,
+}
+
+impl From<overhear_core::settings::RubySettings> for RubySettings {
+    fn from(settings: overhear_core::settings::RubySettings) -> Self {
+        Self {
+            enabled: settings.enabled,
+            known_words: settings.known_words,
+            size: settings.size,
+        }
+    }
 }
 
 #[derive(SimpleObject, Clone)]

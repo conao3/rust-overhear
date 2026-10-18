@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod ejdict;
 pub mod ipa;
+pub mod ruby;
 pub mod wordnet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -64,6 +65,7 @@ pub trait Dictionary: Send + Sync {
 pub struct DictionaryRegistry {
     dictionaries: Vec<Arc<dyn Dictionary>>,
     pronunciation: ipa::IpaDict,
+    pub ruby: ruby::RubyCache,
 }
 
 impl DictionaryRegistry {
@@ -71,6 +73,7 @@ impl DictionaryRegistry {
         Self {
             dictionaries,
             pronunciation: ipa::IpaDict::default(),
+            ruby: ruby::RubyCache::default(),
         }
     }
 
@@ -93,6 +96,7 @@ impl DictionaryRegistry {
         Self {
             dictionaries,
             pronunciation,
+            ruby: ruby::RubyCache::default(),
         }
     }
 

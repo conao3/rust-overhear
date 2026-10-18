@@ -29,6 +29,7 @@ import {
   SET_TARGET_LANG,
   TRANSLATION_ENGINES,
 } from "../lib/queries";
+import { RubyControls } from "./RubyControls";
 import type { Preferences } from "../lib/types";
 
 const LANGUAGES = [
@@ -204,6 +205,7 @@ export function SettingsPanel() {
 
   return (
     <div className="flex flex-col gap-6">
+      <RubyControls />
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold">音声認識</h2>
         <Switch

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::anki::{AnkiConnect, AnkiNote, DEFAULT_DECK, DEFAULT_MODEL};
 use crate::asr::whisper::WhisperRefiner;
@@ -20,7 +20,7 @@ use crate::dict::{DictEntry, DictionaryRegistry, normalize_surface};
 use crate::gate::{ClockMap, SilenceGate};
 use crate::model::{Segment, SegmentId, SegmentStatus, Token};
 use crate::ring::RingBuffer;
-use crate::settings::SettingsStore;
+use crate::settings::{RubySettings, SettingsStore};
 use crate::translate::{TranslateRequest, TranslatorRegistry};
 use crate::vocab::{NewVocab, VocabItem, VocabStore};
 
@@ -109,6 +109,7 @@ pub struct Overhear {
     pub ring: Arc<Mutex<RingBuffer>>,
     pub segments: Arc<RwLock<VecDeque<Segment>>>,
     pub updates: broadcast::Sender<Segment>,
+    pub ruby_updates: watch::Sender<RubySettings>,
     pub translators: Arc<TranslatorRegistry>,
     whisper_threads: Option<usize>,
     refinement_enabled: AtomicBool,
@@ -251,6 +252,7 @@ impl Overhear {
             dictionaries: services.dictionaries,
             vocab: services.vocab,
             anki: services.anki,
+            ruby_updates: watch::channel(services.settings.get().ruby).0,
             settings: services.settings,
             api_keys: services.api_keys,
             target_lang: RwLock::new(config.target_lang.clone()),
@@ -569,6 +571,15 @@ impl Overhear {
         tracing::info!(target = ?config.target, "キャプチャ先を切り替えた");
         let target = config.target.clone();
         self.settings.update(|s| s.capture_target = target)
+    }
+
+    pub fn set_ruby_settings(&self, ruby: RubySettings) -> Result<()> {
+        ruby.validate()?;
+        self.settings.update(|s| {
+            s.ruby = ruby;
+        })?;
+        self.ruby_updates.send_replace(ruby);
+        Ok(())
     }
 
     pub fn target_lang(&self) -> String {

@@ -14,6 +14,10 @@ export const SEGMENT_FIELDS = gql`
       surface
       startMs
       sentenceEnd
+      ruby {
+        text
+        rank
+      }
     }
     translations {
       engineId
@@ -257,6 +261,26 @@ export const SET_REFINEMENT_ENABLED = gql`
   mutation SetRefinementEnabled($enabled: Boolean!) {
     setRefinementEnabled(enabled: $enabled) {
       ${PREFERENCE_FIELDS}
+    }
+  }
+`;
+
+export const RUBY_SETTINGS_UPDATES = gql`
+  subscription RubySettingsUpdates {
+    rubySettingsUpdates {
+      enabled
+      knownWords
+      size
+    }
+  }
+`;
+
+export const SET_RUBY_SETTINGS = gql`
+  mutation SetRubySettings($enabled: Boolean!, $knownWords: Int!, $size: Int!) {
+    setRubySettings(enabled: $enabled, knownWords: $knownWords, size: $size) {
+      enabled
+      knownWords
+      size
     }
   }
 `;

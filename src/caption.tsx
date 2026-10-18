@@ -12,11 +12,14 @@ import ReactDOM from "react-dom/client";
 import { CaptionWindow } from "./CaptionWindow";
 import { client } from "./lib/apollo";
 import "./index.css";
+import { RubyProvider } from "./lib/ruby";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ApolloProvider client={client}>
-      <CaptionWindow />
+      <RubyProvider>
+        <CaptionWindow />
+      </RubyProvider>
     </ApolloProvider>
   </React.StrictMode>,
 );
