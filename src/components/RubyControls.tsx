@@ -83,7 +83,10 @@ export function RubyControls() {
         </SliderTrack>
       </Slider>
       <p className="text-xs leading-relaxed text-ink-muted">
-        出現頻度を目安に、習得済みの範囲より難しい単語に英和辞書の訳を表示します。設定は字幕バーとスタジオに反映され、次回起動にも引き継がれます。
+        映画・ドラマの英語字幕から作られた固定の頻度表を目安に、習得済みの範囲より難しい単語に英和辞書の訳を表示します。同じ動画を何度見ても、単語の順位やレベルは変わりません。
+      </p>
+      <p className="text-xs leading-relaxed text-ink-muted">
+        設定は字幕バーとスタジオに反映され、次回起動にも引き継がれます。
       </p>
       <p className="text-xs text-ink-muted">
         色の目安: <span className="text-emerald-300">頻出 3,000 語以内</span>・
