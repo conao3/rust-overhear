@@ -7,7 +7,7 @@
 //! 品詞情報は持たないため `DictEntry::pos` は None。活用の解決も
 //! 裏付けが無いので、候補を出して辞書に存在するものだけを採る。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -61,6 +61,31 @@ impl EjDict {
         tracing::info!(lemmas = entries.len(), path = %path.display(), "英和辞書を読み込んだ");
         Ok(Self { entries })
     }
+
+    fn senses_for(&self, word: &str) -> Vec<DictSense> {
+        let Some(senses) = self.entries.get(word) else {
+            return Vec::new();
+        };
+        let mut pending: Vec<_> = senses.iter().rev().collect();
+        let mut visited = HashSet::from([word.to_owned()]);
+        let mut resolved = Vec::new();
+        while let Some(definition) = pending.pop() {
+            resolved.push(DictSense {
+                definition: definition.clone(),
+                synonyms: Vec::new(),
+                examples: Vec::new(),
+            });
+            if let Some(reference) = definition.strip_prefix('=') {
+                let target = reference.trim().to_lowercase();
+                if visited.insert(target.clone()) {
+                    if let Some(senses) = self.entries.get(&target) {
+                        pending.extend(senses.iter().rev());
+                    }
+                }
+            }
+        }
+        resolved
+    }
 }
 
 impl Dictionary for EjDict {
@@ -81,19 +106,12 @@ impl Dictionary for EjDict {
         // 候補の先頭 (表層形そのもの) が引ければそれを優先し、
         // 無ければ活用を解いた候補を順に試す。最初に当たった 1 件だけ返す。
         for candidate in inflection_candidates(&cleaned) {
-            if let Some(senses) = self.entries.get(&candidate) {
+            if self.entries.contains_key(&candidate) {
                 return vec![DictEntry {
+                    senses: self.senses_for(&candidate),
                     lemma: candidate,
                     pos: None,
                     ipa_us: None,
-                    senses: senses
-                        .iter()
-                        .map(|s| DictSense {
-                            definition: s.clone(),
-                            synonyms: Vec::new(),
-                            examples: Vec::new(),
-                        })
-                        .collect(),
                     source: "ejdict".to_string(),
                 }];
             }
@@ -143,5 +161,71 @@ mod tests {
     fn unknown_word_returns_empty() {
         let Some(d) = dict() else { return };
         assert!(d.lookup("zzzqqxyz").is_empty());
+    }
+
+    #[test]
+    fn ruby_resolves_references_and_keeps_the_original_headword() {
+        use std::sync::Arc;
+
+        let dictionary = EjDict {
+            entries: HashMap::from([
+                ("sceptical".into(), vec!["=skeptical".into()]),
+                ("skeptical".into(), vec!["疑い深い,懐疑的な".into()]),
+                ("alias".into(), vec!["=sceptical".into()]),
+                ("a-bomb".into(), vec!["=atomic bomb".into()]),
+                ("atomic bomb".into(), vec!["原子爆弾".into()]),
+            ]),
+        };
+        assert_eq!(dictionary.lookup("sceptical")[0].lemma, "sceptical");
+        let registry = super::super::DictionaryRegistry::new(vec![Arc::new(dictionary)]);
+        for word in ["sceptical", "alias"] {
+            assert_eq!(
+                registry.ruby.lookup(&registry, word).unwrap().text,
+                "疑い深い"
+            );
+        }
+        assert_eq!(
+            registry.ruby.lookup(&registry, "A-BOMB").unwrap().text,
+            "原子爆弾"
+        );
+    }
+
+    #[test]
+    fn references_terminate_on_cycles_and_preserve_other_senses() {
+        let dictionary = EjDict {
+            entries: HashMap::from([
+                ("one".into(), vec!["=two".into(), "一つ".into()]),
+                ("two".into(), vec!["=one".into(), "二つ".into()]),
+                ("missing".into(), vec!["=absent".into(), "不足".into()]),
+            ]),
+        };
+        let entries = dictionary.lookup("one");
+        let definitions: Vec<_> = entries[0]
+            .senses
+            .iter()
+            .map(|s| s.definition.as_str())
+            .collect();
+        assert_eq!(definitions, ["=two", "=one", "二つ", "一つ"]);
+        assert_eq!(dictionary.lookup("missing")[0].senses[1].definition, "不足");
+    }
+
+    #[test]
+    fn resolves_references_in_the_bundled_dictionary() {
+        use std::sync::Arc;
+
+        let Some(dictionary) = dict() else { return };
+        let registry = super::super::DictionaryRegistry::new(vec![Arc::new(dictionary)]);
+        for (word, expected) in [
+            ("sceptical", "疑い深い"),
+            ("admonishment", "忠告"),
+            ("aeroplane", "飛行機"),
+            ("A-BOMB", "原子爆弾"),
+        ] {
+            assert_eq!(
+                registry.ruby.lookup(&registry, word).unwrap().text,
+                expected,
+                "{word}"
+            );
+        }
     }
 }
