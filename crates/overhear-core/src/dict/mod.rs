@@ -11,6 +11,7 @@ pub mod ejdict;
 pub mod ipa;
 pub mod ruby;
 pub mod wordnet;
+pub mod wordnet_ja;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Pos {
@@ -86,7 +87,14 @@ impl DictionaryRegistry {
             Err(err) => tracing::warn!(%err, "英和辞書を読み込めなかった"),
         }
         match wordnet::WordNet::from_env() {
-            Ok(wn) => dictionaries.push(Arc::new(wn)),
+            Ok(wn) => {
+                let wn = Arc::new(wn);
+                match wordnet_ja::JapaneseWordNet::from_env(wn.clone()) {
+                    Ok(dict) => dictionaries.push(Arc::new(dict)),
+                    Err(err) => tracing::warn!(%err, "日本語 WordNet を読み込めなかった"),
+                }
+                dictionaries.push(wn);
+            }
             Err(err) => tracing::warn!(%err, "WordNet を読み込めなかった"),
         }
         let pronunciation = ipa::IpaDict::from_env().unwrap_or_else(|err| {

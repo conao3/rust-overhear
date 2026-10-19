@@ -78,12 +78,14 @@ Tauri が持つのはウィンドウとプロセス管理だけで、ドメイ�
 - Linux + PipeWire (`pw-record`)
 - april-asr の共有ライブラリとモデル
 - whisper.cpp (`whisper-server`) と ggml モデル (精度補正を使う場合)
-- WordNet 3.0 (英英辞書) と ejdict-hand (英和辞書)
+- WordNet 3.0 (英英辞書)、ejdict-hand と日本語 WordNet (英和辞書)
 - Anki + AnkiConnect アドオン (カード書き出しを使う場合のみ)
 
 `libaprilasr.so` は nixpkgs に単体パッケージが無く、**`livecaptions` の出力に同梱**されている。flake の devShell がこれを `APRIL_LIB_DIR` で指し、モデルを `APRIL_MODEL_PATH` に注入する。
 
 WordNet も nixpkgs の `wordnet` に `dict/` が入っているため、追加のダウンロードは要らない (`WORDNET_DICT_DIR`)。英和の ejdict-hand はパブリックドメインのタブ区切りテキストを flake が `fetchzip` で固定する (`EJDICT_PATH`)。
+
+日本語 WordNet の語義 ID と日本語の対応表は flake が `fetchurl` で固定する (`WORDNET_JA_PATH`)。英語の活用形・語義 ID の検索には英英辞書と共通のインデックスを使う。
 
 whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入っており、モデル (`ggml-base.en.bin`) は flake が `fetchurl` で固定する (`WHISPER_MODEL_PATH`)。`whisper-server` は精度補正をオンにしている間だけ子プロセスとして動作し、モデルをメモリに保持する。`--no-whisper` で起動すると精度補正の切り替えを無効にする。
 
@@ -170,10 +172,12 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 - 単語レベルは「全単語」、または頻出 1,000 / 2,000 / 3,000 / 5,000 / 10,000 語を習得済みとして選ぶ。初期値は 1,000 語。選んだ範囲より出現頻度が低く、英和辞書で訳を取得できる語に色と日本語ルビを付ける。
 - 色は頻出 3,000 語以内が緑、5,000 語以内が紫、それ以外がオレンジ。頻度は [FrequencyWords の OpenSubtitles2018 英語データ](https://github.com/hermitdave/FrequencyWords/tree/525f9b560de45753a5ea01069454e72e9aa541c6/content/2018/en) に基づく学習の目安で、活用形と辞書の見出し語のうち高い頻度を使う。
 - サイズは英語の文字サイズに対して 40〜150% (初期値 75%)。スライダーを離すと保存し、開いている両ウィンドウに反映する。
-- 訳はローカルの ejdict-hand の先頭の日本語語義を短く表示する。`=skeptical` のような別見出しへの参照は、参照先の語義も取得する。12 文字を超える場合は「…」を付ける。単語をクリックすると辞書で語義の全文を確認できる。
+- 訳はローカルの ejdict-hand と日本語 WordNet から取得し、ejdict-hand の日本語語義を優先する。`=skeptical` のような別見出しへの参照は、参照先の語義も取得する。日本語 WordNet は英語 WordNet と同じ語義 ID で照合し、`defibrillation`（電気的除細動）などの専門語にも対応する。12 文字を超える場合は「…」を付ける。単語をクリックすると辞書で語義の全文を確認できる。
 - 単語のルビは字幕と同じ配信に含め、検索結果は両ウィンドウで共有するサーバーのキャッシュで再利用する。字幕の途中更新もそのまま配信する。設定の同期には変更通知を使う。
 
 頻度データの先頭 10,000 語を `crates/overhear-core/data/en-frequency.txt` に同梱する。出典・加工内容・CC BY-SA 4.0 のライセンスは `THIRD_PARTY_LICENSES.txt` に記載する。
+
+日本語 WordNet は [Open Multilingual Wordnet の日本語データ](https://github.com/omwn/omw-data/tree/406bf83b3c507a3d1f26e88252d5d66893fd36bf/wns/jpn) を同梱し、ローカルで読み込む。[Japanese Wordnet (v1.1)](https://bond-lab.github.io/wnja/index.en.html) © 2009–2010 NICT。ライセンス全文は `THIRD_PARTY_LICENSES.txt` に記載する。
 
 単語の順位は同梱した固定の頻度表で決まる。同じ動画の繰り返し視聴、字幕への再登場、アプリ内での聞き直し、アプリの再起動を通じて同じ順位を使う。辞書キャッシュは検索結果を再利用するためのもので、出現回数を順位に加算する処理は行わない。
 
@@ -233,7 +237,7 @@ CPU 推論 (Core Ultra 5 225U、`num_thread` 8) で字幕 1 行の英→日に�
 - [x] 翻訳ストラテジー (ollama / deepl / google / none) とフォールバック
 - [x] 聞き直しの再生音を拾い直さないミュート (`muteCapture`)
 - [x] two-pass ASR。april の即時出力を whisper.cpp の確定文へ差し替える
-- [x] 辞書。英和 (ejdict-hand) と英英 (WordNet 3.0) を並べて出す。活用は見出し語へ解く
+- [x] 辞書。英和 (ejdict-hand・日本語 WordNet) と英英 (WordNet 3.0) を並べて出す。活用は見出し語へ解く
 - [x] 語彙ストア (SQLite)。文・訳・語義・音声を保存時に焼き付ける
 - [x] Anki 書き出し (AnkiConnect)。音声つきカードを作る
 - [x] 字幕バーとスタジオの 2 ウィンドウ、トレイ、グローバルホットキー
@@ -260,7 +264,7 @@ CPU 推論 (Core Ultra 5 225U、`num_thread` 8) で字幕 1 行の英→日に�
 
 ## 単語の辞書
 
-字幕バー、スタジオの字幕、履歴の単語をクリックすると、英和 (ejdict-hand) と英英 (WordNet) の語義を表示する。WordNet が解決した原形も英和辞書で検索するため、`went` から `go`、`running` から `run` の語義を読める。曲がったアポストロフィ (`’`) も辞書検索用に正規化する。
+字幕バー、スタジオの字幕、履歴の単語をクリックすると、英和 (ejdict-hand・日本語 WordNet) と英英 (WordNet) の語義を表示する。WordNet が解決した原形も英和辞書で検索するため、`went` から `go`、`running` から `run` の語義を読める。曲がったアポストロフィ (`’`) も辞書検索用に正規化する。
 
 見出し語の下に米語の発音記号 (IPA) を表示する。発音データは [ipa-dict](https://github.com/open-dict-data/ipa-dict) の `en_US` を固定して同梱し、`IPA_US_PATH` から読み込む。検索時の外部通信は発生しない。複数の発音がある語はすべて表示し、未収録の語は語義のみ表示する。活用を解いた場合の発音は、各見出し語に対応する。データの出典とライセンスは `THIRD_PARTY_LICENSES.txt` に記載する。
 

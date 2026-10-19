@@ -40,7 +40,7 @@ impl RubyCache {
             .unwrap_or(10001);
         let ruby = entries
             .iter()
-            .filter(|e| e.source == "ejdict")
+            .filter(|e| matches!(e.source.as_str(), "ejdict" | "wordnet-ja"))
             .flat_map(|e| &e.senses)
             .map(|sense| compact_gloss(&sense.definition))
             .find(|text| !text.is_empty())

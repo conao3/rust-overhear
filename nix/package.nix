@@ -110,6 +110,7 @@ let
       preCheck = ''
         export EJDICT_PATH="${pkgs.ejdict}/ejdict-hand-utf8.txt"
         export WORDNET_DICT_DIR="${pkgs.wordnet}/dict"
+        export WORDNET_JA_PATH="${pkgs.wordnet-ja}"
         export IPA_US_PATH="${pkgs.ipa-us}"
       '';
       postInstall = ''
@@ -119,6 +120,7 @@ let
             --set APRIL_MODEL_PATH "${pkgs.april-model}" \
             --set WHISPER_MODEL_PATH "${pkgs.whisper-model}" \
             --set WORDNET_DICT_DIR "${pkgs.wordnet}/dict" \
+            --set WORDNET_JA_PATH "${pkgs.wordnet-ja}" \
             --set EJDICT_PATH "${pkgs.ejdict}/ejdict-hand-utf8.txt" \
             --set IPA_US_PATH "${pkgs.ipa-us}" \
             --set OVERHEAR_AUTOSTART_EXEC overhear \

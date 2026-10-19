@@ -150,6 +150,29 @@ impl WordNet {
             .filter_map(|offset| read_synset(&mut file, *offset, lemma))
             .collect()
     }
+
+    pub(super) fn lookup_lemmas(&self, surface: &str) -> Vec<(String, Pos)> {
+        let cleaned = super::normalize_surface(surface);
+        if cleaned.is_empty() {
+            return Vec::new();
+        }
+        Pos::all()
+            .into_iter()
+            .flat_map(|pos| {
+                self.morphy(&cleaned, pos)
+                    .into_iter()
+                    .map(move |lemma| (lemma, pos))
+            })
+            .collect()
+    }
+
+    pub(super) fn offsets(&self, pos: Pos, lemma: &str) -> &[u64] {
+        self.by_pos
+            .get(&pos)
+            .and_then(|data| data.index.get(lemma))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
 }
 
 impl Dictionary for WordNet {
@@ -162,24 +185,17 @@ impl Dictionary for WordNet {
     }
 
     fn lookup(&self, surface: &str) -> Vec<DictEntry> {
-        let cleaned = super::normalize_surface(surface);
-        if cleaned.is_empty() {
-            return Vec::new();
-        }
-
         let mut entries = Vec::new();
-        for pos in Pos::all() {
-            for lemma in self.morphy(&cleaned, pos) {
-                let senses = self.senses_for(pos, &lemma);
-                if !senses.is_empty() {
-                    entries.push(DictEntry {
-                        lemma,
-                        pos: Some(pos),
-                        ipa_us: None,
-                        senses,
-                        source: "wordnet".to_string(),
-                    });
-                }
+        for (lemma, pos) in self.lookup_lemmas(surface) {
+            let senses = self.senses_for(pos, &lemma);
+            if !senses.is_empty() {
+                entries.push(DictEntry {
+                    lemma,
+                    pos: Some(pos),
+                    ipa_us: None,
+                    senses,
+                    source: "wordnet".to_string(),
+                });
             }
         }
         entries

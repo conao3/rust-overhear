@@ -47,6 +47,12 @@
                 hash = "sha256-KvbxVKXDYydfBS0fhazt7zjtGFypdFqkMUvnf2tw3mc=";
               };
 
+              wordnet-ja = final.fetchurl {
+                name = "wn-data-jpn.tab";
+                url = "https://raw.githubusercontent.com/omwn/omw-data/406bf83b3c507a3d1f26e88252d5d66893fd36bf/wns/jpn/wn-data-jpn.tab";
+                hash = "sha256-9H/vsRgkuG2FVsYy9bcUODl6useWd7YHBwzQvcuawhI=";
+              };
+
               whisper-model = final.fetchurl {
                 name = "ggml-base.en.bin";
                 url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
@@ -62,6 +68,7 @@
                 whisper-model
                 ejdict
                 ipa-us
+                wordnet-ja
                 ;
             };
 
@@ -129,6 +136,7 @@
               # WordNet 3.0 の dict ファイル (英英辞書)。nixpkgs に入っているため
               # 追加のダウンロードは要らない。
               WORDNET_DICT_DIR = "${pkgs.wordnet}/dict";
+              WORDNET_JA_PATH = "${pkgs.wordnet-ja}";
               WHISPER_MODEL_PATH = "${pkgs.whisper-model}";
               EJDICT_PATH = "${pkgs.ejdict}/ejdict-hand-utf8.txt";
               IPA_US_PATH = "${pkgs.ipa-us}";
