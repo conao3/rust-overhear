@@ -22,6 +22,9 @@ pub struct RubyCache(Mutex<HashMap<String, Option<WordRuby>>>);
 
 impl RubyCache {
     pub fn lookup(&self, dictionaries: &DictionaryRegistry, surface: &str) -> Option<WordRuby> {
+        if is_contraction(surface) {
+            return None;
+        }
         let word = normalize_surface(surface);
         if word.is_empty() || word.len() > 128 {
             return None;
@@ -53,6 +56,32 @@ impl RubyCache {
     }
 }
 
+fn is_contraction(surface: &str) -> bool {
+    let word = surface
+        .replace(['’', '‘'], "'")
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase();
+    ["n't", "'m", "'re", "'ve", "'ll", "'d"]
+        .iter()
+        .any(|suffix| word.ends_with(suffix))
+        || matches!(
+            word.as_str(),
+            "it's"
+                | "he's"
+                | "she's"
+                | "that's"
+                | "there's"
+                | "here's"
+                | "what's"
+                | "who's"
+                | "how's"
+                | "where's"
+                | "when's"
+                | "why's"
+                | "let's"
+        )
+}
+
 fn compact_gloss(definition: &str) -> String {
     let mut text = String::new();
     let mut closing = Vec::new();
@@ -62,6 +91,8 @@ fn compact_gloss(definition: &str) -> String {
             '〈' => Some('〉'),
             '(' => Some(')'),
             '（' => Some('）'),
+            '[' => Some(']'),
+            '［' => Some('］'),
             _ => None,
         } {
             closing.push(end);
@@ -75,6 +106,14 @@ fn compact_gloss(definition: &str) -> String {
         }
     }
     let text = text.trim();
+    if ["の省略形", "の短縮形", "の縮約形", "の略形", "の略語"]
+        .iter()
+        .any(|description| text.contains(description))
+        || text.ends_with("の略")
+        || text.starts_with("短縮形")
+    {
+        return String::new();
+    }
     if !text
         .chars()
         .any(|c| ('\u{3040}'..='\u{30ff}').contains(&c) || ('\u{3400}'..='\u{9fff}').contains(&c))
@@ -148,5 +187,68 @@ mod tests {
             "あいうえおかきくけこさし…"
         );
         assert!(FREQUENCIES["the"] < 1000);
+    }
+
+    #[test]
+    fn omits_contraction_explanations_but_keeps_translations() {
+        for definition in [
+            "it isの省略形",
+            "do notの短縮形",
+            "going toの縮約形",
+            "ABCの略",
+            "短縮形(has, is, does)",
+        ] {
+            assert_eq!(compact_gloss(definition), "", "{definition}");
+        }
+        assert_eq!(compact_gloss("『写真』[photographの短縮形]"), "写真");
+        assert_eq!(compact_gloss("チェロ(楽器)[violoncelloの短縮形]"), "チェロ");
+        assert_eq!(compact_gloss("省略形"), "省略形");
+        assert_eq!(compact_gloss("戦争の略奪品"), "戦争の略奪品");
+    }
+
+    #[test]
+    fn contractions_are_filtered_before_possessive_normalization_and_cache_lookup() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dict = DictionaryRegistry::new(vec![Arc::new(CountingDictionary(calls.clone()))]);
+        dict.ruby.0.lock().unwrap().insert(
+            "it".into(),
+            Some(WordRuby {
+                text: "それは".into(),
+                rank: 1,
+            }),
+        );
+        for surface in [
+            "It's",
+            "“It’s,”",
+            "HE'S",
+            "don't",
+            "I’m",
+            "we’re",
+            "they've",
+            "I'll",
+            "I'd",
+            "let's",
+            "what's",
+            "shouldn’t",
+        ] {
+            assert!(dict.ruby.lookup(&dict, surface).is_none(), "{surface}");
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert_eq!(dict.ruby.lookup(&dict, "it").unwrap().text, "それは");
+        assert_eq!(dict.ruby.lookup(&dict, "thesis’s").unwrap().text, "論文");
+    }
+
+    #[test]
+    fn bundled_dictionary_ruby_omits_abbreviation_explanations() {
+        if std::env::var_os("EJDICT_PATH").is_none() {
+            return;
+        }
+        let dict = DictionaryRegistry::from_env();
+        for surface in ["It's", "don't", "gonna", "gotta", "I'm", "we're"] {
+            assert!(dict.ruby.lookup(&dict, surface).is_none(), "{surface}");
+        }
+        assert_eq!(dict.ruby.lookup(&dict, "photo").unwrap().text, "写真");
+        assert_eq!(dict.ruby.lookup(&dict, "cello").unwrap().text, "チェロ");
+        assert!(!dict.lookup("don't").is_empty());
     }
 }
