@@ -180,13 +180,23 @@ mod tests {
         let registry = super::super::DictionaryRegistry::new(vec![Arc::new(dictionary)]);
         for word in ["sceptical", "alias"] {
             assert_eq!(
-                registry.ruby.lookup(&registry, word).unwrap().text,
-                "疑い深い"
+                registry
+                    .ruby
+                    .lookup(&registry, word)
+                    .unwrap()
+                    .text
+                    .as_deref(),
+                Some("疑い深い")
             );
         }
         assert_eq!(
-            registry.ruby.lookup(&registry, "A-BOMB").unwrap().text,
-            "原子爆弾"
+            registry
+                .ruby
+                .lookup(&registry, "A-BOMB")
+                .unwrap()
+                .text
+                .as_deref(),
+            Some("原子爆弾")
         );
     }
 
@@ -222,8 +232,13 @@ mod tests {
             ("A-BOMB", "原子爆弾"),
         ] {
             assert_eq!(
-                registry.ruby.lookup(&registry, word).unwrap().text,
-                expected,
+                registry
+                    .ruby
+                    .lookup(&registry, word)
+                    .unwrap()
+                    .text
+                    .as_deref(),
+                Some(expected),
                 "{word}"
             );
         }

@@ -86,12 +86,13 @@ export function RubyControls() {
         映画・ドラマの英語字幕から作られた固定の頻度表を目安に、習得済みの範囲より難しい単語に英和辞書の訳を表示します。同じ動画を何度見ても、単語の順位やレベルは変わりません。
       </p>
       <p className="text-xs leading-relaxed text-ink-muted">
-        設定は字幕バーとスタジオに反映され、次回起動にも引き継がれます。
+        学習対象で和訳が見つからない単語は赤色で表示します。習得済みの単語と短縮形の説明は対象外です。設定は字幕バーとスタジオに反映され、次回起動にも引き継がれます。
       </p>
       <p className="text-xs text-ink-muted">
         色の目安: <span className="text-emerald-300">頻出 3,000 語以内</span>・
         <span className="text-purple-300">5,000 語以内</span>・
-        <span className="text-amber-300">それ以外</span>
+        <span className="text-amber-300">それ以外</span>・
+        <span data-ruby-level="missing">和訳なし</span>
       </p>
       {error && (
         <p role="alert" className="text-xs text-amber-300">

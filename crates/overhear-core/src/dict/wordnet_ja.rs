@@ -142,7 +142,7 @@ mod tests {
         assert!(dictionary.lookup("defiberlation").is_empty());
         let registry = DictionaryRegistry::new(vec![Arc::new(dictionary)]);
         let ruby = registry.ruby.lookup(&registry, "defibrillation").unwrap();
-        assert_eq!(ruby.text, "電気的除細動");
+        assert_eq!(ruby.text.as_deref(), Some("電気的除細動"));
         assert_eq!(ruby.rank, 10001);
     }
 
@@ -177,7 +177,7 @@ mod tests {
             ("defibrillators", "除細動機"),
         ] {
             let ruby = registry.ruby.lookup(&registry, word).unwrap();
-            assert_eq!(ruby.text, expected, "{word}");
+            assert_eq!(ruby.text.as_deref(), Some(expected), "{word}");
             assert_eq!(ruby.rank, 10001);
         }
         let ejdict = DictionaryRegistry::new(vec![Arc::new(EjDict::from_env().unwrap())]);
@@ -187,6 +187,13 @@ mod tests {
                 ejdict.ruby.lookup(&ejdict, word).unwrap().text
             );
         }
-        assert!(registry.ruby.lookup(&registry, "defiberlation").is_none());
+        assert_eq!(
+            registry
+                .ruby
+                .lookup(&registry, "defiberlation")
+                .unwrap()
+                .text,
+            None
+        );
     }
 }

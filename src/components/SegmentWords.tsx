@@ -48,11 +48,13 @@ export const SegmentWords = memo(function SegmentWords({
               type="button"
               data-ruby-level={
                 ruby
-                  ? ruby.rank <= 3000
-                    ? "common"
-                    : ruby.rank <= 5000
-                      ? "intermediate"
-                      : "advanced"
+                  ? ruby.text === null
+                    ? "missing"
+                    : ruby.rank <= 3000
+                      ? "common"
+                      : ruby.rank <= 5000
+                        ? "intermediate"
+                        : "advanced"
                   : undefined
               }
               className="rounded px-0.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent hover:bg-accent/25 active:bg-accent/40"
@@ -70,7 +72,7 @@ export const SegmentWords = memo(function SegmentWords({
               {(settings?.enabled ?? true) ? (
                 <ruby>
                   <span className="word-surface">{words[i]}</span>
-                  <rt aria-hidden="true" title={ruby?.text}>
+                  <rt aria-hidden="true" title={ruby?.text ?? undefined}>
                     {ruby?.text}
                   </rt>
                 </ruby>

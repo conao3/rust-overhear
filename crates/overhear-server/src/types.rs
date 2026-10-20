@@ -28,7 +28,8 @@ pub struct Token {
 
 #[derive(SimpleObject, Clone)]
 pub struct WordRuby {
-    pub text: String,
+    /// Absent when a learning word has no Japanese translation.
+    pub text: Option<String>,
     pub rank: i32,
 }
 

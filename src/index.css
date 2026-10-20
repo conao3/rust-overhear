@@ -39,6 +39,9 @@ body {
 [data-ruby-level="advanced"] {
   color: #ffcf80;
 }
+[data-ruby-level="missing"] {
+  color: #ff8585;
+}
 .segment-words {
   display: flex;
   flex-wrap: wrap;

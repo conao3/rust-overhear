@@ -5,7 +5,7 @@ export type Token = {
   surface: string;
   startMs: number;
   sentenceEnd: boolean;
-  ruby: { text: string; rank: number } | null;
+  ruby: { text: string | null; rank: number } | null;
 };
 
 export type Translation = {
