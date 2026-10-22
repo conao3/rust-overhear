@@ -10,7 +10,6 @@ import { useMemo } from "react";
 import { TranslateAction } from "./components/TranslateAction";
 import { SegmentWords } from "./components/SegmentWords";
 import { SEGMENTS, SEGMENT_UPDATES, TRANSLATION_ENGINES } from "./lib/queries";
-import { displayText } from "./lib/casing";
 import { useTranslationRequests } from "./lib/translation";
 import type { Segment, TranslationEngineInfo } from "./lib/types";
 
@@ -67,9 +66,11 @@ export function CaptionWindow() {
 
       <div className="caption-content flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-4">
         <div className="flex w-full shrink-0 flex-col gap-1">
-          <p className="h-5 w-full shrink-0 truncate text-sm text-ink-muted/50">
-            {previous ? displayText(previous) : ""}
-          </p>
+          {previous && (
+            <p className="w-full text-2xl leading-snug font-medium text-ink-muted">
+              <SegmentWords segment={previous} />
+            </p>
+          )}
 
           {current ? (
             <>
