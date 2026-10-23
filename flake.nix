@@ -37,6 +37,7 @@
               # 英和辞書 (パブリックドメイン)。
               ejdict = final.fetchzip {
                 name = "ejdic-hand";
+                stripRoot = false;
                 url = "https://github.com/kujirahand/EJDict/releases/download/v2.0.1/ejdic-hand-txt.zip";
                 hash = "sha256-vw9Qs3p01MTsi+VZ320/Sd+/IMibqtc7JEHiC9GjYzI=";
               };
