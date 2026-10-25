@@ -1052,7 +1052,11 @@ struct SegmentBuilder {
     next_id: SegmentId,
     current: Option<Segment>,
     asr_engine: &'static str,
+    cant_keep_up_logged: Option<Instant>,
+    cant_keep_up_suppressed: u64,
 }
+
+const CANT_KEEP_UP_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 impl SegmentBuilder {
     fn new(asr_engine: &'static str) -> Self {
@@ -1060,7 +1064,26 @@ impl SegmentBuilder {
             next_id: 1,
             current: None,
             asr_engine,
+            cant_keep_up_logged: None,
+            cant_keep_up_suppressed: 0,
         }
+    }
+
+    fn log_cant_keep_up(&mut self) {
+        let now = Instant::now();
+        if self
+            .cant_keep_up_logged
+            .is_some_and(|at| now.duration_since(at) < CANT_KEEP_UP_LOG_INTERVAL)
+        {
+            self.cant_keep_up_suppressed += 1;
+            return;
+        }
+        tracing::warn!(
+            suppressed = self.cant_keep_up_suppressed,
+            "ASR が実時間に追いつけていない"
+        );
+        self.cant_keep_up_logged = Some(now);
+        self.cant_keep_up_suppressed = 0;
     }
 
     /// `to_abs` は ASR の時刻をリングバッファの絶対時間へ直す。
@@ -1087,7 +1110,7 @@ impl SegmentBuilder {
             }
             AsrEvent::Silence => None,
             AsrEvent::CantKeepUp => {
-                tracing::warn!("ASR が実時間に追いつけていない");
+                self.log_cant_keep_up();
                 None
             }
         }
