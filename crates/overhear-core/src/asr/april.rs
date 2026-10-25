@@ -21,6 +21,8 @@ const RESULT_RECOGNITION_FINAL: c_int = 2;
 const RESULT_ERROR_CANT_KEEP_UP: c_int = 3;
 const RESULT_SILENCE: c_int = 4;
 
+const LOG_LEVEL_ERROR: c_int = 3;
+
 const TOKEN_FLAG_WORD_BOUNDARY: c_int = 0x0000_0001;
 const TOKEN_FLAG_SENTENCE_END: c_int = 0x0000_0002;
 
@@ -64,6 +66,7 @@ struct AprilConfig {
 }
 
 extern "C" {
+    static mut g_loglevel: c_int;
     fn aam_api_init(version: c_int);
     fn aam_create_model(model_path: *const c_char) -> *mut c_void;
     fn aam_get_sample_rate(model: *mut c_void) -> usize;
@@ -176,7 +179,10 @@ impl AprilRecognizer {
         if !path.exists() {
             return Err(anyhow!("april のモデルが見つからない: {}", path.display()));
         }
-        API_INIT.call_once(|| unsafe { aam_api_init(APRIL_VERSION) });
+        API_INIT.call_once(|| unsafe {
+            aam_api_init(APRIL_VERSION);
+            g_loglevel = LOG_LEVEL_ERROR;
+        });
 
         let c_path = CString::new(path.to_string_lossy().as_bytes())
             .context("モデルパスに NUL が含まれている")?;
