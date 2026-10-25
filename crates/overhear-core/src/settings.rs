@@ -112,7 +112,10 @@ mod tests {
 
     #[test]
     fn persists_across_reopen() {
-        let dir = tempdir::TempDir::new("overhear-settings").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("overhear-settings")
+            .tempdir()
+            .unwrap();
         let store = SettingsStore::open(dir.path()).unwrap();
         assert_eq!(store.get(), Settings::default());
         store
@@ -132,7 +135,10 @@ mod tests {
 
     #[test]
     fn ruby_settings_persist_and_reject_invalid_ranges() {
-        let dir = tempdir::TempDir::new("overhear-ruby-settings").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("overhear-ruby-settings")
+            .tempdir()
+            .unwrap();
         std::fs::write(dir.path().join("settings.json"), r#"{"translator":"none"}"#).unwrap();
         let store = SettingsStore::open(dir.path()).unwrap();
         assert_eq!(store.get().ruby, RubySettings::default());
@@ -155,14 +161,20 @@ mod tests {
 
     #[test]
     fn rejects_a_broken_file() {
-        let dir = tempdir::TempDir::new("overhear-settings").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("overhear-settings")
+            .tempdir()
+            .unwrap();
         std::fs::write(dir.path().join("settings.json"), "{ not json").unwrap();
         assert!(SettingsStore::open(dir.path()).is_err());
     }
 
     #[test]
     fn refinement_defaults_off_and_persists_both_choices() {
-        let dir = tempdir::TempDir::new("overhear-refinement").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("overhear-refinement")
+            .tempdir()
+            .unwrap();
         std::fs::write(dir.path().join("settings.json"), r#"{"translator":"none"}"#).unwrap();
         let store = SettingsStore::open(dir.path()).unwrap();
         assert!(!store.get().refinement_enabled);
@@ -176,7 +188,10 @@ mod tests {
 
     #[test]
     fn failed_save_preserves_current_settings() {
-        let dir = tempdir::TempDir::new("overhear-settings-failure").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("overhear-settings-failure")
+            .tempdir()
+            .unwrap();
         let store = SettingsStore::open(dir.path()).unwrap();
         std::fs::create_dir(dir.path().join("settings.json.tmp")).unwrap();
         assert!(store.update(|s| s.refinement_enabled = true).is_err());

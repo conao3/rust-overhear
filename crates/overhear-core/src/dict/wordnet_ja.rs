@@ -103,8 +103,11 @@ mod tests {
     use super::*;
     use crate::dict::{DictionaryRegistry, ejdict::EjDict};
 
-    fn english_fixture() -> (tempdir::TempDir, Arc<WordNet>) {
-        let dir = tempdir::TempDir::new("wordnet-ja-test").unwrap();
+    fn english_fixture() -> (tempfile::TempDir, Arc<WordNet>) {
+        let dir = tempfile::Builder::new()
+            .prefix("wordnet-ja-test")
+            .tempdir()
+            .unwrap();
         for (pos, index) in [
             (
                 "noun",
