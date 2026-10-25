@@ -204,8 +204,11 @@ fn sanitize(s: &str) -> String {
 mod tests {
     use super::*;
 
-    fn store() -> (VocabStore, tempdir::TempDir) {
-        let dir = tempdir::TempDir::new("overhear-vocab").unwrap();
+    fn store() -> (VocabStore, tempfile::TempDir) {
+        let dir = tempfile::Builder::new()
+            .prefix("overhear-vocab")
+            .tempdir()
+            .unwrap();
         (VocabStore::open(dir.path()).unwrap(), dir)
     }
 
