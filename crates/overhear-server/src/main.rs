@@ -29,7 +29,7 @@ use overhear_core::settings::SettingsStore;
 use overhear_core::translate::TranslatorRegistry;
 use overhear_core::vocab::VocabStore;
 use overhear_core::{EngineChoice, Overhear, RuntimeConfig};
-use rand::Rng;
+use rand::RngExt;
 
 use schema::{MutationRoot, OverhearSchema, QueryRoot, SubscriptionRoot};
 
