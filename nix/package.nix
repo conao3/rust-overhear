@@ -108,6 +108,7 @@ let
         cp -r ${frontend} dist
       '';
       preCheck = ''
+        export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         export EJDICT_PATH="${pkgs.ejdict}/ejdict-hand-utf8.txt"
         export WORDNET_DICT_DIR="${pkgs.wordnet}/dict"
         export WORDNET_JA_PATH="${pkgs.wordnet-ja}"
