@@ -49,13 +49,13 @@ let
           ../pnpm-lock.yaml
         ]
       );
-      inherit (pkgs) pnpm;
+      pnpm = pkgs.overhearPnpm;
       fetcherVersion = 4;
       hash = "sha256-WiN3Vwv1RgUshh9eFpi4VjwaIVCETLbdKpyn8c9mrTE=";
     };
     nativeBuildInputs = with pkgs; [
-      nodejs
-      pnpm
+      overhearNodejs
+      overhearPnpm
       pnpmConfigHook
     ];
     buildPhase = ''

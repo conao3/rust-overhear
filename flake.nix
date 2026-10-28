@@ -20,8 +20,8 @@
           overlay =
             final: prev:
             let
-              nodejs = prev.nodejs_latest;
-              pnpm = prev.pnpm.override { nodejs-slim = prev.nodejs-slim_latest; };
+              overhearNodejs = prev.nodejs_latest;
+              overhearPnpm = prev.pnpm.override { nodejs-slim = prev.nodejs-slim_latest; };
               rustToolchain = prev.rust-bin.stable.latest.default;
 
               # april-asr の学習済みモデル。livecaptions の overlay
@@ -62,8 +62,8 @@
             in
             {
               inherit
-                nodejs
-                pnpm
+                overhearNodejs
+                overhearPnpm
                 rustToolchain
                 april-model
                 whisper-model
@@ -106,8 +106,8 @@
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               rustToolchain
-              nodejs
-              pnpm
+              overhearNodejs
+              overhearPnpm
               pkg-config
               pipewire # pw-record (音声キャプチャ)
               sqlite
