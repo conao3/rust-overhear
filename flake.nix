@@ -20,8 +20,8 @@
           overlay =
             final: prev:
             let
-              nodejs = prev.nodejs_24;
-              pnpm = prev.pnpm_10.override { nodejs-slim = prev.nodejs-slim_24; };
+              nodejs = prev.nodejs_latest;
+              pnpm = prev.pnpm.override { nodejs-slim = prev.nodejs-slim_latest; };
               rustToolchain = prev.rust-bin.stable.latest.default;
 
               # april-asr の学習済みモデル。livecaptions の overlay
