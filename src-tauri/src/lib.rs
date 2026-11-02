@@ -183,6 +183,11 @@ fn build_tray(app: &AppHandle) -> Result<()> {
     )?;
     let open_studio = MenuItem::with_id(app, "open_studio", "スタジオを開く", true, None::<&str>)?;
     let autostart_dir = autostart::autostart_dir()?;
+    match autostart::refresh(&autostart_dir) {
+        Ok(true) => tracing::info!("自動起動の desktop entry を新しい引数の形に書き換えた"),
+        Ok(false) => {}
+        Err(err) => tracing::warn!(%err, "自動起動の desktop entry を確かめられなかった"),
+    }
     let launch_at_login = CheckMenuItem::with_id(
         app,
         "launch_at_login",

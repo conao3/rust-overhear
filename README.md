@@ -67,7 +67,7 @@ PipeWire monitor
 
 2 つ目を起動すると、そちらはすぐ終わり、動いているほうのスタジオが前に出る。`$XDG_RUNTIME_DIR/overhear.lock` を flock で掴めたほうが本体になり、`overhear.sock` で 2 つ目からの知らせを受ける。ホットキーを他のアプリが使っていて登録できないときは、警告を出して起動を続ける (トレイからは操作できる)。
 
-トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動の desktop entry は `overhear app start-app --autostart` で起動し、スタジオを出さずに始まる。字幕バーは前回の表示状態に従う。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
+トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動の desktop entry は `overhear app start-app --autostart` で起動し、スタジオを出さずに始まる。起動時に `Exec=… --autostart` の形の古い entry を見つけたら、コマンドはそのままに `Exec=… app start-app --autostart` へ書き換える。字幕バーは前回の表示状態に従う。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
 
 Tauri が持つのはウィンドウとプロセス管理だけで、ドメインロジックは GraphQL サーバ側にある。Tauri の IPC ではなくローカル HTTP / WebSocket に口を開けているのは、字幕が subscription を本質とするデータであり、Apollo の `GraphQLWsLink` がそのまま使えるため。
 

@@ -39,9 +39,8 @@ pub fn is_enabled(dir: &Path) -> bool {
     dir.join(FILE_NAME).exists()
 }
 
-pub fn enable(dir: &Path, exec: &str) -> Result<()> {
-    std::fs::create_dir_all(dir).with_context(|| format!("{} を作れない", dir.display()))?;
-    let entry = format!(
+fn entry(exec: &str) -> String {
+    format!(
         "[Desktop Entry]\n\
          Type=Application\n\
          Name=overhear\n\
@@ -50,9 +49,44 @@ pub fn enable(dir: &Path, exec: &str) -> Result<()> {
          Icon=overhear\n\
          Terminal=false\n\
          X-GNOME-Autostart-enabled=true\n"
-    );
+    )
+}
+
+pub fn enable(dir: &Path, exec: &str) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("{} を作れない", dir.display()))?;
     let path = dir.join(FILE_NAME);
-    std::fs::write(&path, entry).with_context(|| format!("{} に書けない", path.display()))
+    std::fs::write(&path, entry(exec)).with_context(|| format!("{} に書けない", path.display()))
+}
+
+pub fn refresh(dir: &Path) -> Result<bool> {
+    let path = dir.join(FILE_NAME);
+    let current = match std::fs::read_to_string(&path) {
+        Ok(current) => current,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("{} を読めない", path.display())),
+    };
+    let mut changed = false;
+    let lines: Vec<String> = current
+        .lines()
+        .map(|line| {
+            match line
+                .strip_prefix("Exec=")
+                .and_then(|exec| exec.strip_suffix(" --autostart"))
+            {
+                Some(exec) if !line.ends_with(AUTOSTART_ARGS) => {
+                    changed = true;
+                    format!("Exec={exec} {AUTOSTART_ARGS}")
+                }
+                _ => line.to_string(),
+            }
+        })
+        .collect();
+    if !changed {
+        return Ok(false);
+    }
+    std::fs::write(&path, lines.join("\n") + "\n")
+        .with_context(|| format!("{} に書けない", path.display()))?;
+    Ok(true)
 }
 
 pub fn disable(dir: &Path) -> Result<()> {
@@ -82,6 +116,31 @@ mod tests {
         assert!(!is_enabled(&dir));
         // 無い状態で消しても失敗しない。
         disable(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn refresh_rewrites_the_flat_autostart_flag() {
+        let dir =
+            std::env::temp_dir().join(format!("overhear-autostart-refresh-{}", std::process::id()));
+        assert!(!refresh(&dir).unwrap());
+
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(FILE_NAME);
+        std::fs::write(
+            &path,
+            "[Desktop Entry]\nExec=/opt/overhear --autostart\nIcon=overhear\n",
+        )
+        .unwrap();
+        assert!(refresh(&dir).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[Desktop Entry]\nExec=/opt/overhear app start-app --autostart\nIcon=overhear\n"
+        );
+        assert!(!refresh(&dir).unwrap());
+
+        enable(&dir, "overhear").unwrap();
+        assert!(!refresh(&dir).unwrap());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
