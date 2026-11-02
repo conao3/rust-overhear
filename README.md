@@ -67,7 +67,7 @@ PipeWire monitor
 
 2 つ目を起動すると、そちらはすぐ終わり、動いているほうのスタジオが前に出る。`$XDG_RUNTIME_DIR/overhear.lock` を flock で掴めたほうが本体になり、`overhear.sock` で 2 つ目からの知らせを受ける。ホットキーを他のアプリが使っていて登録できないときは、警告を出して起動を続ける (トレイからは操作できる)。
 
-トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動では `--autostart` が付き、スタジオを出さずに始まる。字幕バーは前回の表示状態に従う。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
+トレイの「ログイン時に起動」で XDG autostart (`$XDG_CONFIG_HOME/autostart/overhear.desktop`) を置き外しする。自動起動の desktop entry は `overhear app start-app --autostart` で起動し、スタジオを出さずに始まる。字幕バーは前回の表示状態に従う。desktop entry の `Exec` は、パッケージ版では wrapper が渡す `OVERHEAR_AUTOSTART_EXEC` (`overhear`、PATH から引く)、開発中は実行中のバイナリの絶対パスになる。
 
 Tauri が持つのはウィンドウとプロセス管理だけで、ドメインロジックは GraphQL サーバ側にある。Tauri の IPC ではなくローカル HTTP / WebSocket に口を開けているのは、字幕が subscription を本質とするデータであり、Apollo の `GraphQLWsLink` がそのまま使えるため。
 
@@ -87,11 +87,11 @@ WordNet も nixpkgs の `wordnet` に `dict/` が入っているため、追加�
 
 日本語 WordNet の語義 ID と日本語の対応表は flake が `fetchurl` で固定する (`WORDNET_JA_PATH`)。英語の活用形・語義 ID の検索には英英辞書と共通のインデックスを使う。
 
-whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入っており、モデル (`ggml-base.en.bin`) は flake が `fetchurl` で固定する (`WHISPER_MODEL_PATH`)。`whisper-server` は精度補正をオンにしている間だけ子プロセスとして動作し、モデルをメモリに保持する。`--no-whisper` で起動すると精度補正の切り替えを無効にする。
+whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入っており、モデル (`ggml-base.en.bin`) は flake が `fetchurl` で固定する (`WHISPER_MODEL_PATH`)。`whisper-server` は精度補正をオンにしている間だけ子プロセスとして動作し、モデルをメモリに保持する。`overhear-server server start-server --no-whisper` で起動すると精度補正の切り替えを無効にする。
 
 語彙と音声クリップは `$XDG_DATA_HOME/overhear` (既定 `~/.local/share/overhear`) に置く。`OVERHEAR_DATA_DIR` で変えられる。
 
-スタジオで選んだ翻訳エンジンと音源は同じディレクトリの `settings.json` に残り、次の起動で戻る。保存した音源が見つからない (USB の機器を抜いた等) ときは警告を出して既定シンクで起動する。`--translator` を渡した起動では保存値より引数を優先する。
+スタジオで選んだ翻訳エンジンと音源は同じディレクトリの `settings.json` に残り、次の起動で戻る。保存した音源が見つからない (USB の機器を抜いた等) ときは警告を出して既定シンクで起動する。`start-server` に `--translator` を渡した起動では保存値より引数を優先する。
 
 ## 入れる
 
@@ -165,6 +165,22 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
   -d '{"query":"{ segments(limit: 5) { id status sourceText } }"}'
 ```
 
+## コマンドライン
+
+2 つの実行ファイルは AWS CLI と同じ文法 (`<cli> [グローバルオプション] <command> <subcommand> [--parameter value ...]`) で引数を受ける。パラメータはすべて名前付きで、真偽値は `--flag` / `--no-flag` の対。値の先頭が `file://` ならファイルの中身を読む。各階層で `help` を出し、`--cli-input-json` (キーはパラメータ名の PascalCase) と `--generate-cli-skeleton input|output` を受ける。グローバルオプションは `--output json|text|table` (既定 `json`)・`--query <JMESPath>`・`--debug`・`--version`。終了コードは 0 が成功、252 が文法・パラメータの誤り、254 が処理対象側の誤り (bind できないポート、登録されていない翻訳エンジン)、255 がそれ以外。
+
+```sh
+overhear # アプリを開く (desktop entry の起動)
+overhear app start-app --autostart # スタジオを出さずに始める (ログイン時の自動起動)
+overhear-server server start-server --port 4747 --no-auth --graphiql
+overhear-server server start-server --mock --no-whisper --silence-threshold 0
+overhear-server server start-server --generate-cli-skeleton output
+```
+
+`overhear` は引数なしで起動するとアプリを開く (desktop entry から引数なしで起動するため)。`overhear-server server start-server` は接続情報 (`BaseUrl` / `GraphqlUrl` / `WebsocketUrl` / `Token`。`--no-auth` では `Token` が `null`) を標準出力に 1 度出してから待ち受け続ける。ログは標準エラーに出す。Tauri は `--output json` で起動して先頭の JSON を読む。
+
+`start-server` のパラメータ: `--port` (省くと OS に任せる)、`--auth` / `--no-auth`、`--graphiql` / `--no-graphiql`、`--mock` / `--no-mock` (擬似 ASR)、`--whisper` / `--no-whisper`、`--whisper-threads` (既定 2)、`--silence-threshold`、`--ring-seconds` (既定 600)、`--target-lang`、`--translator`。
+
 ## 日本語ルビと単語レベル
 
 スタジオの「設定」→「日本語ルビ」で表示のオン・オフ、単語レベル、ルビのサイズを選ぶ。設定は字幕バー・スタジオの現在の字幕・履歴に反映され、次回起動にも引き継がれる。
@@ -203,7 +219,7 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 
 ### 設定タブ
 
-スタジオの「設定」タブで、訳す先の言語・Ollama のモデル (pull 済みのものから選ぶ)・DeepL / Google の API キーを変えられる。言語とモデルはデータディレクトリの `settings.json` に、API キーは Secret Service (gnome-keyring 等) にサービス名 `overhear` で置き、次の起動でも戻る。キーそのものはサーバから返さず、入っているかどうかだけを出す。Secret Service が無い環境でも起動はでき、キーの保存だけがエラーになる。`--target-lang` を渡した起動では保存値より引数を優先する。
+スタジオの「設定」タブで、訳す先の言語・Ollama のモデル (pull 済みのものから選ぶ)・DeepL / Google の API キーを変えられる。言語とモデルはデータディレクトリの `settings.json` に、API キーは Secret Service (gnome-keyring 等) にサービス名 `overhear` で置き、次の起動でも戻る。キーそのものはサーバから返さず、入っているかどうかだけを出す。Secret Service が無い環境でも起動はでき、キーの保存だけがエラーになる。`start-server` に `--target-lang` を渡した起動では保存値より引数を優先する。
 
 スタジオの「翻訳エンジン」で選んだものが翻訳の既定になる。指定エンジンが失敗すると既定エンジンへフォールバックし、`Translation.fallbackFrom` に元のエンジン id が残る。フォールバック先も失敗した場合は翻訳なしで segment を確定させ、字幕そのものは止めない。
 
@@ -293,7 +309,7 @@ april-asr は供給された音声に対して常に推論を走らせるため�
 | 待機 (無音) | 0.0%                          |
 | 音声あり    | 供給している間だけ april の分 |
 
-止めたぶん ASR の内部時計は進まなくなるので、ゲートが開くたびに「ASR の時刻 → 絶対時間」の対応点を残し (`ClockMap`)、segment を組むときにトークンごとに足し戻している。april は文の確定を次の音声が来てから出すことが多く、確定時点の差を一律に足すと文間の無音ぶん区間が後ろへずれる。リングバッファには無音も含めて常に入れるため、聞き直しは影響を受けない。`--silence-threshold 0` でゲートを切れる。
+止めたぶん ASR の内部時計は進まなくなるので、ゲートが開くたびに「ASR の時刻 → 絶対時間」の対応点を残し (`ClockMap`)、segment を組むときにトークンごとに足し戻している。april は文の確定を次の音声が来てから出すことが多く、確定時点の差を一律に足すと文間の無音ぶん区間が後ろへずれる。リングバッファには無音も含めて常に入れるため、聞き直しは影響を受けない。`start-server --silence-threshold 0` でゲートを切れる。
 
 whisper の差し替えと翻訳はそれぞれ 1 本の worker で流し、**どちらも新しい segment から処理する**。古い順に処理すると、溜まった分を捌き終えるまで字幕バーの文が差し替わらない。古い segment は台詞が途切れたときに埋まる。翻訳の待ち件数はスタジオのヘッダに「翻訳待ち」として出る。whisper は 600ms 未満の区間には掛けない (相槌や物音が大半で、CPU を使うわりに得るものが無い)。スレッド数の既定は 2。whisper のプロセスは nice 10 で動かし、CPU が競合したときは即時認識を優先する。
 

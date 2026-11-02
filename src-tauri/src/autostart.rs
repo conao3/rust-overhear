@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 /// 自動起動で立ち上がったことを示す引数。スタジオを出さずに始める。
-pub const AUTOSTART_ARG: &str = "--autostart";
+pub const AUTOSTART_ARGS: &str = "app start-app --autostart";
 
 const FILE_NAME: &str = "overhear.desktop";
 
@@ -46,7 +46,7 @@ pub fn enable(dir: &Path, exec: &str) -> Result<()> {
          Type=Application\n\
          Name=overhear\n\
          Comment=システム音声を字幕にして語学学習に使う\n\
-         Exec={exec} {AUTOSTART_ARG}\n\
+         Exec={exec} {AUTOSTART_ARGS}\n\
          Icon=overhear\n\
          Terminal=false\n\
          X-GNOME-Autostart-enabled=true\n"
@@ -76,7 +76,7 @@ mod tests {
         enable(&dir, "overhear").unwrap();
         assert!(is_enabled(&dir));
         let entry = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
-        assert!(entry.contains("\nExec=overhear --autostart\n"));
+        assert!(entry.contains("\nExec=overhear app start-app --autostart\n"));
 
         disable(&dir).unwrap();
         assert!(!is_enabled(&dir));

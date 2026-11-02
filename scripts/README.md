@@ -4,7 +4,7 @@
 
 ## 字幕の購読と集計
 
-`overhear-server` が標準出力の先頭に出す接続情報 JSON をファイルへ保存し、認証付きで購読する。接続情報にはトークンが含まれるため、ファイルを手元で管理する。
+`overhear-server server start-server` が標準出力の先頭に出す接続情報 JSON (`WebsocketUrl` と `Token`) をファイルへ保存し、認証付きで購読する。接続情報にはトークンが含まれるため、ファイルを手元で管理する。
 
 ```sh
 node scripts/record-segments.mjs --connection .claude-dev/scratch/connection.json --output .claude-dev/scratch/segments.jsonl --seconds 30

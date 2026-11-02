@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    overhear_lib::run()
+    std::process::exit(overhear_lib::main(std::env::args_os().collect()))
 }

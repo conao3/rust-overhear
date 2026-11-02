@@ -4,7 +4,6 @@
 //! 新しい接続情報をウィンドウへ渡してページを読み込み直す。
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,17 +22,18 @@ const MAX_RESTARTS_IN_WINDOW: usize = 5;
 const ENDPOINT_KEY: &str = "overhear-endpoint";
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Announce {
-    pub graphql: String,
-    pub websocket: String,
+    pub graphql_url: String,
+    pub websocket_url: String,
     pub token: Option<String>,
 }
 
 impl Announce {
     fn payload(&self) -> serde_json::Value {
         serde_json::json!({
-            "graphql": self.graphql,
-            "websocket": self.websocket,
+            "graphql": self.graphql_url,
+            "websocket": self.websocket_url,
             "token": self.token,
         })
     }
@@ -70,29 +70,35 @@ fn server_binary() -> Result<PathBuf> {
     sibling.ok_or_else(|| anyhow!("overhear-server が見つからない (先に cargo build すること)"))
 }
 
-/// サーバを起動し、標準出力の 1 行目に出る接続情報を受け取る。
+/// サーバを起動し、標準出力の先頭に出る接続情報 (JSON) を受け取る。
 fn spawn() -> Result<(Announce, Child)> {
     let bin = server_binary()?;
     let mut command = Command::new(&bin);
-    command.stdout(Stdio::piped()).stderr(Stdio::inherit());
+    command
+        .args(["server", "start-server", "--output", "json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
     // アプリが SIGKILL されても、april を抱えたサーバが残らないようにする。
     let mut child = die_with_parent(&mut command)
         .spawn()
         .with_context(|| format!("{} の起動", bin.display()))?;
 
     let stdout = child.stdout.take().context("サーバの stdout が取れない")?;
-    let reader = BufReader::new(stdout);
-
-    // サーバはログを stderr に出すので stdout の 1 行目が接続情報になるが、
-    // 何かが紛れ込んでも拾えるよう、JSON として読める行を先頭から探す。
-    for line in reader.lines().take(20) {
-        let line = line.context("サーバの接続情報を読めない")?;
-        if let Ok(announce) = serde_json::from_str::<Announce>(line.trim()) {
-            return Ok((announce, child));
+    // サーバはログを stderr に出すので、stdout の先頭が接続情報の JSON になる。
+    let announce = serde_json::Deserializer::from_reader(stdout)
+        .into_iter::<Announce>()
+        .next();
+    match announce {
+        Some(Ok(announce)) => Ok((announce, child)),
+        Some(Err(err)) => {
+            let _ = child.kill();
+            Err(anyhow!("サーバの接続情報を読めない: {err}"))
+        }
+        None => {
+            let _ = child.kill();
+            Err(anyhow!("サーバが接続情報を出力しなかった"))
         }
     }
-    let _ = child.kill();
-    Err(anyhow!("サーバが接続情報を出力しなかった"))
 }
 
 /// サーバの子プロセスを持ち、落ちたら起動し直す。
@@ -147,7 +153,7 @@ impl Supervisor {
                         if let Ok(mut slot) = this.child.lock() {
                             *slot = Some(child);
                         }
-                        tracing::info!(endpoint = %announce.graphql, "overhear-server を起動し直した");
+                        tracing::info!(endpoint = %announce.graphql_url, "overhear-server を起動し直した");
                         on_restart(&announce);
                     }
                     Err(err) => tracing::warn!(%err, "overhear-server を起動し直せなかった"),
@@ -175,8 +181,8 @@ mod tests {
     #[test]
     fn scripts_carry_the_endpoint() {
         let announce = Announce {
-            graphql: "http://127.0.0.1:1/graphql".into(),
-            websocket: "ws://127.0.0.1:1/graphql".into(),
+            graphql_url: "http://127.0.0.1:1/graphql".into(),
+            websocket_url: "ws://127.0.0.1:1/graphql".into(),
             token: Some("t".into()),
         };
         let init = announce.init_script();

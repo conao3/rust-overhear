@@ -26,20 +26,20 @@ if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 86400) {
 }
 const connection = JSON.parse(readFileSync(values.connection, "utf8"));
 if (
-  !/^wss?:\/\//.test(connection.websocket) ||
-  typeof connection.token !== "string" ||
-  !connection.token
+  !/^wss?:\/\//.test(connection.WebsocketUrl) ||
+  typeof connection.Token !== "string" ||
+  !connection.Token
 ) {
   throw new Error(
-    "The connection file must contain websocket and a non-empty token",
+    "The connection file must contain WebsocketUrl and a non-empty Token",
   );
 }
 const output = openSync(values.output, "wx", 0o600);
 const start = performance.now();
 const client = createClient({
-  url: connection.websocket,
+  url: connection.WebsocketUrl,
   webSocketImpl: WebSocket,
-  connectionParams: { token: connection.token },
+  connectionParams: { token: connection.Token },
   connectionAckWaitTimeout: 5000,
   retryAttempts: 0,
 });

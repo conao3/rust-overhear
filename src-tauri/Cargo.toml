@@ -22,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-window-state = "2"
+overhear-cli.workspace = true
 overhear-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -29,3 +30,4 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 libc.workspace = true
+clap = { version = "4", features = ["derive"] }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/overhear-core", "crates/overhear-server", "src-tauri"]
+members = ["crates/overhear-cli", "crates/overhear-core", "crates/overhear-server", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,6 +9,7 @@ license = "GPL-3.0-only"
 repository = "https://github.com/conao3/rust-overhear"
 
 [workspace.dependencies]
+overhear-cli = { path = "crates/overhear-cli" }
 overhear-core = { path = "crates/overhear-core", default-features = false }
 anyhow = "1"
 thiserror = "2"

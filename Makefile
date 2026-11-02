@@ -8,7 +8,7 @@ dev: install
 
 .PHONY: dev-server
 dev-server:
-	cargo run -p overhear-server -- --port 4747 --no-auth --graphiql
+	cargo run -p overhear-server -- server start-server --port 4747 --no-auth --graphiql
 
 .PHONY: dev-web
 dev-web: install

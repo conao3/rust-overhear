@@ -11,6 +11,7 @@
 
 mod autostart;
 mod caption_visibility;
+mod cli;
 mod server;
 mod single_instance;
 
@@ -232,8 +233,20 @@ fn build_tray(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+pub fn main(args: Vec<std::ffi::OsString>) -> i32 {
+    if args.len() == 1 {
+        run(false);
+        return 0;
+    }
+    overhear_cli::run::<cli::Cli>(args, |cli| match cli.command {
+        cli::Command::App(cli::AppCommand::StartApp(args)) => {
+            run(args.autostart);
+            Ok(())
+        }
+    })
+}
+
+fn run(from_autostart: bool) {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -286,7 +299,6 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
-            let from_autostart = std::env::args().any(|a| a == autostart::AUTOSTART_ARG);
             if let Some(listener) = listener {
                 let show_handle = app.handle().clone();
                 single_instance::serve(listener, move || {
@@ -303,7 +315,7 @@ pub fn run() {
                 }
             }
             let (supervisor, announce) = server::Supervisor::start()?;
-            tracing::info!(endpoint = %announce.graphql, "overhear-server に接続する");
+            tracing::info!(endpoint = %announce.graphql_url, "overhear-server に接続する");
             let handle = app.handle();
             let script = announce.init_script();
             let visibility =
