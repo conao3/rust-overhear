@@ -8,5 +8,4 @@ description = "AWS CLI style argument grammar shared by the overhear binaries"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-jmespath = "0.5"
 serde_json.workspace = true

@@ -1,6 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use overhear_cli::{CliSpec, GlobalArgs, InputArgs};
-use serde_json::Value;
+use overhear_cli::GlobalArgs;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -37,24 +36,6 @@ pub struct StartAppArgs {
     /// スタジオを出して始める (既定)。
     #[arg(long, overrides_with = "autostart")]
     pub no_autostart: bool,
-    #[command(flatten)]
-    pub input: InputArgs,
-}
-
-impl CliSpec for Cli {
-    fn global(&self) -> &GlobalArgs {
-        &self.global
-    }
-
-    fn input(&self) -> &InputArgs {
-        match &self.command {
-            Command::App(AppCommand::StartApp(args)) => &args.input,
-        }
-    }
-
-    fn output_skeleton(&self) -> Value {
-        Value::Object(serde_json::Map::new())
-    }
 }
 
 #[cfg(test)]
@@ -72,8 +53,7 @@ mod tests {
 
     #[test]
     fn parses_autostart() {
-        let Parsed::Run(cli, None) = parse::<Cli>(argv(&["app", "start-app", "--autostart"]))
-        else {
+        let Parsed::Run(cli) = parse::<Cli>(argv(&["app", "start-app", "--autostart"])) else {
             panic!("expected run");
         };
         let Command::App(AppCommand::StartApp(args)) = cli.command;

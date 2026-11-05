@@ -193,14 +193,13 @@ curl -s -X POST http://127.0.0.1:4747/graphql \
 
 ## コマンドライン
 
-2 つの実行ファイルは AWS CLI と同じ文法 (`<cli> [グローバルオプション] <command> <subcommand> [--parameter value ...]`) で引数を受ける。パラメータはすべて名前付きで、真偽値は `--flag` / `--no-flag` の対。値の先頭が `file://` ならファイルの中身を読む。各階層で `help` を出し、`--cli-input-json` (キーはパラメータ名の PascalCase) と `--generate-cli-skeleton input|output` を受ける。グローバルオプションは `--output json|text|table` (既定 `json`)・`--query <JMESPath>`・`--debug`・`--version`。終了コードは 0 が成功、252 が文法・パラメータの誤り、254 が処理対象側の誤り (bind できないポート、登録されていない翻訳エンジン)、255 がそれ以外。
+2 つの実行ファイルは AWS CLI と同じ文法 (`<cli> [グローバルオプション] <command> <subcommand> [--parameter value ...]`) で引数を受ける。パラメータはすべて名前付きで、真偽値は `--flag` / `--no-flag` の対。値の先頭が `file://` ならファイルの中身を読む。各階層で `help` を出す。グローバルオプションは `--output json|text|table` (既定 `json`)・`--debug`・`--version`。終了コードは 0 が成功、252 が文法・パラメータの誤り、254 が処理対象側の誤り (bind できないポート、登録されていない翻訳エンジン)、255 がそれ以外。
 
 ```sh
 overhear # アプリを開く (desktop entry の起動)
 overhear app start-app --autostart # スタジオを出さずに始める (ログイン時の自動起動)
 overhear-server server start-server --port 4747 --no-auth --graphiql
 overhear-server server start-server --mock --no-whisper --silence-threshold 0
-overhear-server server start-server --generate-cli-skeleton output
 ```
 
 `overhear` は引数なしで起動するとアプリを開く (desktop entry から引数なしで起動するため)。`overhear-server server start-server` は接続情報 (`BaseUrl` / `GraphqlUrl` / `WebsocketUrl` / `Token`。`--no-auth` では `Token` が `null`) を標準出力に 1 度出してから待ち受け続ける。ログは標準エラーに出す。Tauri は `--output json` で起動して先頭の JSON を読む。

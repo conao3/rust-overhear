@@ -1,7 +1,6 @@
 use clap::{Args, Parser, Subcommand};
-use overhear_cli::{CliSpec, GlobalArgs, InputArgs, parse_integer, parse_string};
+use overhear_cli::{GlobalArgs, parse_integer, parse_string};
 use serde::Serialize;
-use serde_json::Value;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -75,39 +74,15 @@ pub struct StartServerArgs {
     /// 既定の翻訳エンジン。省くと前回 UI で選んだもの、それも無ければ ollama。
     #[arg(long, value_name = "STRING", value_parser = parse_string)]
     pub translator: Option<String>,
-    #[command(flatten)]
-    pub input: InputArgs,
 }
 
-#[derive(Serialize, Default, Debug)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct StartServerOutput {
     pub base_url: String,
     pub graphql_url: String,
     pub websocket_url: String,
     pub token: Option<String>,
-}
-
-impl CliSpec for Cli {
-    fn global(&self) -> &GlobalArgs {
-        &self.global
-    }
-
-    fn input(&self) -> &InputArgs {
-        match &self.command {
-            Command::Server(ServerCommand::StartServer(args)) => &args.input,
-        }
-    }
-
-    fn output_skeleton(&self) -> Value {
-        let output = match &self.command {
-            Command::Server(ServerCommand::StartServer(_)) => StartServerOutput {
-                token: Some(String::new()),
-                ..StartServerOutput::default()
-            },
-        };
-        serde_json::to_value(output).expect("output skeleton serializes")
-    }
 }
 
 #[cfg(test)]
@@ -123,11 +98,11 @@ mod tests {
             .collect()
     }
 
-    fn start_server(args: &[&str]) -> (StartServerArgs, Option<Value>) {
+    fn start_server(args: &[&str]) -> StartServerArgs {
         match parse::<Cli>(argv(args)) {
-            Parsed::Run(cli, skeleton) => {
+            Parsed::Run(cli) => {
                 let Command::Server(ServerCommand::StartServer(args)) = cli.command;
-                (args, skeleton)
+                args
             }
             Parsed::Exit(code) => panic!("exited with {code}"),
         }
@@ -135,7 +110,7 @@ mod tests {
 
     #[test]
     fn parses_dev_server_flags() {
-        let (args, _) = start_server(&[
+        let args = start_server(&[
             "server",
             "start-server",
             "--port",
@@ -160,29 +135,21 @@ mod tests {
     }
 
     #[test]
-    fn skeletons_use_pascal_case() {
-        let (_, input) = start_server(&["server", "start-server", "--generate-cli-skeleton"]);
-        let input = input.unwrap();
-        for key in [
-            "Port",
-            "Auth",
-            "Graphiql",
-            "Mock",
-            "Whisper",
-            "RingSeconds",
-            "TargetLang",
-        ] {
-            assert!(input.get(key).is_some(), "{key}");
-        }
-        let (_, output) = start_server(&[
-            "server",
-            "start-server",
-            "--generate-cli-skeleton",
-            "output",
-        ]);
+    fn output_keys_are_pascal_case() {
+        let output = StartServerOutput {
+            base_url: "http://127.0.0.1:4747".into(),
+            graphql_url: "http://127.0.0.1:4747/graphql".into(),
+            websocket_url: "ws://127.0.0.1:4747/graphql".into(),
+            token: Some("t".into()),
+        };
         assert_eq!(
-            output.unwrap(),
-            serde_json::json!({"BaseUrl": "", "GraphqlUrl": "", "WebsocketUrl": "", "Token": ""})
+            serde_json::to_value(output).unwrap(),
+            serde_json::json!({
+                "BaseUrl": "http://127.0.0.1:4747",
+                "GraphqlUrl": "http://127.0.0.1:4747/graphql",
+                "WebsocketUrl": "ws://127.0.0.1:4747/graphql",
+                "Token": "t"
+            })
         );
     }
 }

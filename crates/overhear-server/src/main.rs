@@ -275,7 +275,7 @@ async fn start_server(global: &GlobalArgs, args: StartServerArgs) -> Result<(), 
         token,
     };
     let value = serde_json::to_value(announce).map_err(|err| CliError::Other(err.to_string()))?;
-    overhear_cli::emit(global, &value)?;
+    overhear_cli::emit(global, &value);
     let _ = std::io::stdout().flush();
 
     tracing::info!(%local, "overhear-server を起動した");
