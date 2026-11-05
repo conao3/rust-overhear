@@ -1,8 +1,34 @@
+<p align="center">
+  <img src="docs/assets/banner.png" alt="overhear: live subtitles and sentence mining for any audio your computer plays" width="880">
+</p>
+
+<p align="center"><strong>Live subtitles and sentence mining for any audio your computer plays</strong></p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/conao3/rust-overhear" alt="License: GPL-3.0"></a>
+  <a href="https://github.com/conao3/rust-overhear/stargazers"><img src="https://img.shields.io/github/stars/conao3/rust-overhear?style=flat" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="#設計の核">設計の核</a> ·
+  <a href="#アーキテクチャ">アーキテクチャ</a> ·
+  <a href="#入れる">入れる</a> ·
+  <a href="#使い方">使い方</a> ·
+  <a href="#anki-への書き出し">Anki への書き出し</a> ·
+  <a href="#既知の制約">既知の制約</a>
+</p>
+
 # overhear
 
 システム音声に常駐する語学学習用の字幕・単語学習アプリ。Netflix でも YouTube でも Spotify でもビデオ会議でも、**音が鳴っていれば効く**。
 
 既存の語学学習ツール (Language Reactor、LLPlayer、asbplayer、SubMiner) は「特定のプレイヤーの中の動画」か「特定のストリーミングサイト」に紐づく。overhear は PipeWire の既定シンクの monitor を掴むため、字幕ファイルの有無にも、サイトの DOM 構造にも、再生元にも依存しない。
+
+- **どの音にも字幕が付く。** april-asr の即時字幕を動画の上に重ね、精度補正をオンにすると whisper.cpp で単語と句読点を直す
+- **聞き直せる。** 既定で直近 10 分の音声をメモリに持ち、字幕の行からその区間を再生し直せる
+- **知らない語が浮かぶ。** 単語レベルを選ぶと範囲外の語に色と日本語ルビが付き、クリックで英和・英英辞書と発音記号を引ける
+- **手元で完結する。** 音声認識・辞書・既定の翻訳 (Ollama) はローカルで動く。外部へ送る翻訳エンジン (DeepL / Google) は選んだときだけ使う
+- **Anki へ流し込める。** 保存した語を、文・訳・語義・その区間の音声つきのカードにして書き出す
 
 ## 設計の核
 
@@ -122,11 +148,11 @@ home.packages = [ inputs.overhear.packages.${pkgs.stdenv.hostPlatform.system}.de
 
 - `rust-deps`: Crane で Rust の依存ライブラリとテスト用の成果物をキャッシュする。Cargo の依存・機能・ビルド設定やツールチェーンを変えたときに更新する。
 - `frontend`: TypeScript の型検査と Vite のビルド。Rust だけの変更では再利用する。pnpm の依存取得は `package.json` と `pnpm-lock.yaml` の変更で更新する。
-- `default`: キャッシュからアプリ本体を release ビルドし、ワークスペースの全テストを実行する。UI は従来どおり実行ファイルに埋め込む。
+- `default`: キャッシュからアプリ本体を release ビルドし、ワークスペースの全テストを実行する。UI は実行ファイルに埋め込む。
 
 README などの文書・作業ファイルはビルドの入力から除く。Linux のデスクトップ版では `rlib` と実行ファイルを生成し、使わない `staticlib` / `cdylib` は生成しない。音声認識の最適化レベルは変更していない。
 
-キャッシュが無い初回や依存更新時にはコンパイルが必要。利用中の字幕への負荷を抑えるため、ビルドは引き続き `nix build --option cores 4 --max-jobs 1 .`、更新・再起動は tmux `rust-overhear` セッションで行う。
+キャッシュが無い初回や依存更新時にはコンパイルが必要。利用中の字幕への負荷を抑えるため、ビルドは `nix build --option cores 4 --max-jobs 1 .`、更新・再起動は tmux `rust-overhear` セッションで行う。
 
 ```sh
 python3 scripts/benchmark-build.py          # 文書・Rust・UI・Cargo 設定のキャッシュ境界を検証
@@ -263,11 +289,11 @@ CPU 推論 (Core Ultra 5 225U、`num_thread` 8) で字幕 1 行の英→日に�
 - [x] ログイン時の自動起動 (XDG autostart)
 - [x] 翻訳エンジンと音源の選択の永続化 (`settings.json`)
 - [x] 音源の選択 (再生側の monitor / 録音側)。切り替えは `pw-record` の子プロセスだけを差し替える
-- [ ] `pipewire-rs` 直結 (現状は `pw-record` の subprocess)
 - [x] API キーの Secret Service (keyring) 保存。スタジオの設定タブから入れる
 - [x] 設定タブ (訳す先の言語、Ollama のモデル、API キー)
 - [x] キャプチャとサーバが落ちたときの自動再起動
 - [x] ウィンドウの位置と大きさの保存
+- [ ] `pipewire-rs` 直結 (現状は `pw-record` の subprocess)
 
 ## 即時字幕の遅延
 
