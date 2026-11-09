@@ -22,7 +22,7 @@ async-trait = "0.1"
 rusqlite.workspace = true
 chrono.workspace = true
 libc.workspace = true
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+keyring = "4"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "multipart", "form", "query"] }
 
 [dev-dependencies]
