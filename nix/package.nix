@@ -51,7 +51,7 @@ let
       );
       pnpm = pkgs.overhearPnpm;
       fetcherVersion = 4;
-      hash = "sha256-V0FaKkrLuhjb/sLcUrV9w3T5/9zw681H/5UZPX1jp8k=";
+      hash = "sha256-9zAeREyZFC/YPM2W0lWSnVNS6zgWSHmDcx+RhxtNKzY=";
     };
     nativeBuildInputs = with pkgs; [
       overhearNodejs
