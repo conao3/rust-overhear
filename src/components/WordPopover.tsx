@@ -138,11 +138,11 @@ export function WordPopover({
                   )}
                   <span className="text-xs text-ink-muted">
                     {entry.source === "ejdict"
-                      ? "英和 · ejdict"
+                      ? "英和 (ejdict)"
                       : entry.source === "wordnet-ja"
-                        ? "英和 · 日本語 WordNet"
+                        ? "英和 (日本語 WordNet)"
                         : entry.source === "wordnet"
-                          ? "英英 · WordNet"
+                          ? "英英 (WordNet)"
                           : entry.source}
                   </span>
                 </h3>
