@@ -73,6 +73,10 @@ PipeWire monitor
       React + Tailwind + react-aria-components + Apollo Client
 ```
 
+<img src="images/caption-bar.png" alt="字幕バー。直前と現在の英文にルビを付け、下に訳を表示" width="834">
+
+画面は仮の音声と仮の翻訳を使い、標準のダークテーマで撮影。
+
 ウィンドウは 2 枚ある。
 
 | ウィンドウ           | 役割                                                                                                             |
@@ -127,6 +131,10 @@ whisper.cpp は nixpkgs の `whisper-cpp` に `whisper-server` が入ってお�
 nix run github:conao3/rust-overhear        # そのまま起動
 nix profile install github:conao3/rust-overhear
 ```
+
+<img src="images/studio-history.png" alt="スタジオの履歴タブ。ルビ付きの字幕と訳、聞き直せる過去の行" width="834">
+
+画面は仮の音声と仮の翻訳を使い、標準のダークテーマで撮影。
 
 NixOS / home-manager では flake の入力に足して `packages.default` を入れる。
 
@@ -244,6 +252,10 @@ overhear-server server start-server --mock --no-whisper --silence-threshold 0
 
 ### 設定タブ
 
+<img src="images/settings.png" alt="設定タブ。字幕の精度補正、訳す先の言語、Ollama のモデル、API キー" width="834">
+
+画面は仮の音声と仮の翻訳を使い、標準のダークテーマで撮影。
+
 スタジオの「設定」タブで、訳す先の言語・Ollama のモデル (pull 済みのものから選ぶ)・DeepL / Google の API キーを変えられる。言語とモデルはデータディレクトリの `settings.json` に、API キーは Secret Service (gnome-keyring 等) にサービス名 `overhear` で置き、次の起動でも戻る。キーそのものはサーバから返さず、入っているかどうかだけを出す。Secret Service が無い環境でも起動はでき、キーの保存だけがエラーになる。`start-server` に `--target-lang` を渡した起動では保存値より引数を優先する。
 
 スタジオの「翻訳エンジン」で選んだものが翻訳の既定になる。指定エンジンが失敗すると既定エンジンへフォールバックし、`Translation.fallbackFrom` に元のエンジン id が残る。フォールバック先も失敗した場合は翻訳なしで segment を確定させ、字幕そのものは止めない。
@@ -307,6 +319,10 @@ CPU 推論 (Core Ultra 5 225U、`num_thread` 8) で字幕 1 行の英→日に�
 
 ## 単語の辞書
 
+<img src="images/dictionary.png" alt="crusty の辞書。発音記号と英和・英英の語義、語彙に保存するボタン" width="834">
+
+画面は仮の音声と仮の翻訳を使い、標準のダークテーマで撮影。
+
 字幕バー、スタジオの字幕、履歴の単語をクリックすると、英和 (ejdict-hand・日本語 WordNet) と英英 (WordNet) の語義を表示する。WordNet が解決した原形も英和辞書で検索するため、`went` から `go`、`running` から `run` の語義を読める。曲がったアポストロフィ (`’`) も辞書検索用に正規化する。
 
 見出し語の下に米語の発音記号 (IPA) を表示する。発音データは [ipa-dict](https://github.com/open-dict-data/ipa-dict) の `en_US` を固定して同梱し、`IPA_US_PATH` から読み込む。検索時の外部通信は発生しない。複数の発音がある語はすべて表示し、未収録の語は語義のみ表示する。活用を解いた場合の発音は、各見出し語に対応する。データの出典とライセンスは `THIRD_PARTY_LICENSES.txt` に記載する。
@@ -318,6 +334,10 @@ CPU 推論 (Core Ultra 5 225U、`num_thread` 8) で字幕 1 行の英→日に�
 スタジオの字幕と履歴では、辞書から語彙を保存できる。保存時に表示中の原文・単語とサーバの字幕を照合し、whisper の補正などで変わっていたら、辞書を開き直すよう案内する。
 
 ## Anki への書き出し
+
+<img src="images/vocab.png" alt="語彙タブ。保存した 3 語の語義と文" width="834">
+
+画面は仮の音声と仮の翻訳を使い、標準のダークテーマで撮影。
 
 Anki を起動し AnkiConnect アドオンを入れておく (`OVERHEAR_ANKI_ENDPOINT`、既定 `http://127.0.0.1:8765`)。語彙タブで選んで「Anki へ書き出す」を押すと、デッキ `overhear` に Basic ノートを作る。
 
