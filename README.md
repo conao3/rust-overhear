@@ -252,7 +252,7 @@ overhear-server server start-server --mock --no-whisper --silence-threshold 0
 
 ### 設定タブ
 
-<img src="images/settings.png" alt="設定タブ。字幕の精度補正、訳す先の言語、Ollama のモデル、API キー" width="834">
+<img src="images/settings.png" alt="設定タブ。字幕の精度補正、訳す先の言語、Ollama のモデル" width="834">
 
 画面は仮の音声と仮の翻訳を使い、標準のダークテーマで撮影。
 
